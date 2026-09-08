@@ -128,7 +128,7 @@ step "deploy-manifests" {
                                 name: randomquotes
                                 port:
                                   number: 80
-                                                EOT
+                                                    EOT
             Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
             Octopus.Action.RunOnServer = "false"
             Octopus.Action.Script.ScriptSource = "Inline"
@@ -229,7 +229,7 @@ step "deploy-manifests-dev" {
                                 name: randomquotes
                                 port:
                                   number: 80
-                                            EOT
+                                                EOT
             Octopus.Action.KubernetesContainers.Namespace = "#{K8s.Namespace}"
             Octopus.Action.RunOnServer = "false"
             Octopus.Action.Script.ScriptSource = "Inline"
@@ -269,7 +269,7 @@ step "capture-deployment-artifacts" {
                 new_octopusartifact randomquotes-describe.txt "describe-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.txt"
                 kubectl get deployment,rollout,svc,ingress,configmap,pod -l app=randomquotes -o yaml > randomquotes-resources.yaml
                 new_octopusartifact randomquotes-resources.yaml "resources-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.yaml"
-            EOT
+                EOT
         }
     }
 }
