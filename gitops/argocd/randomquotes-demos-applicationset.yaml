@@ -41,25 +41,31 @@ spec:
           - matrix:
               generators:
                 - list:
-                    elements:
-                      - flavour: blue-green
-                        branch: refs/heads/demo/blue-green
-                        previewEnabled: "false"
-                      - flavour: bg-preview
-                        branch: refs/heads/demo/bg-preview
-                        previewEnabled: "true"
-                      - flavour: canary
-                        branch: refs/heads/demo/canary
-                        previewEnabled: "false"
-                      - flavour: servicenow-cr-gate
-                        branch: HEAD
-                        previewEnabled: "false"
-                      - flavour: process-template
-                        branch: HEAD
-                        previewEnabled: "false"
-                      - flavour: smoke-step-template
-                        branch: HEAD
-                        previewEnabled: "false"
+                    # Deliberately empty (2026-09-08). All 6 flavours were
+                    # filling the local cluster (48 Applications, 100+ pods)
+                    # and their Octopus-side projects mostly don't work yet
+                    # anyway (missing channels/step templates — see
+                    # docs/conference-demo-readiness.md). Re-add a flavour
+                    # here once its Octopus project is actually fixed.
+                    elements: []
+                    # - flavour: blue-green
+                    #   branch: refs/heads/demo/blue-green
+                    #   previewEnabled: "false"
+                    # - flavour: bg-preview
+                    #   branch: refs/heads/demo/bg-preview
+                    #   previewEnabled: "true"
+                    # - flavour: canary
+                    #   branch: refs/heads/demo/canary
+                    #   previewEnabled: "false"
+                    # - flavour: servicenow-cr-gate
+                    #   branch: HEAD
+                    #   previewEnabled: "false"
+                    # - flavour: process-template
+                    #   branch: HEAD
+                    #   previewEnabled: "false"
+                    # - flavour: smoke-step-template
+                    #   branch: HEAD
+                    #   previewEnabled: "false"
                 - list:
                     elements:
                       - tenant: acme-corp
@@ -115,7 +121,7 @@ spec:
       # the matching Gateway's RBAC-scoped account surfaces only its own side.
       project: '{{.source}}'
       source:
-        repoURL: https://github.com/vlussenburg/octopus-iac-lab
+        repoURL: https://github.com/creid-octopus/octopus-iac-lab
         # Each flavour's chart is the source of truth on its own branch.
         # The Octopus auto-update step also commits image.tag updates
         # back to THIS branch — keeping the demo branch self-contained.
