@@ -135,7 +135,7 @@ step "deploy-manifests" {
                                 name: randomquotes-preview
                                 port:
                                   number: 80
-                                    EOT
+                                        EOT
             Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
             Octopus.Action.RunOnServer = "false"
             Octopus.Action.Script.ScriptSource = "Inline"
@@ -236,7 +236,7 @@ step "deploy-manifests-dev" {
                                 name: randomquotes
                                 port:
                                   number: 80
-                                            EOT
+                                                EOT
             Octopus.Action.KubernetesContainers.Namespace = "#{K8s.Namespace}"
             Octopus.Action.RunOnServer = "false"
             Octopus.Action.Script.ScriptSource = "Inline"
@@ -299,7 +299,7 @@ step "promote-rollout" {
                     # otherwise the next step (Argo image-tag update) races
                     # the cluster.
                     kubectl argo rollouts status randomquotes --timeout 5m
-                EOT
+                    EOT
             Octopus.Action.Script.ScriptSource = "Inline"
             Octopus.Action.Script.Syntax = "Bash"
         }
@@ -327,7 +327,7 @@ step "capture-deployment-artifacts" {
                 new_octopusartifact randomquotes-describe.txt "describe-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.txt"
                 kubectl get deployment,svc,ingress,configmap,pod -l app=randomquotes -o yaml > randomquotes-resources.yaml
                 new_octopusartifact randomquotes-resources.yaml "resources-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.yaml"
-            EOT
+                EOT
         }
     }
 }
