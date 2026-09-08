@@ -115,7 +115,7 @@ step "ensure-ingress" {
                   --class=nginx \
                   --rule="#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}.localtest.me/*=randomquotes:80" \
                   --dry-run=client -o yaml | kubectl apply -f -
-                                        EOT
+                                            EOT
         }
     }
 }
@@ -141,7 +141,7 @@ step "capture-deployment-artifacts" {
                 new_octopusartifact randomquotes-describe.txt "describe-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.txt"
                 kubectl get deployment,svc,ingress,configmap,pod -l app=randomquotes -o yaml > randomquotes-resources.yaml
                 new_octopusartifact randomquotes-resources.yaml "resources-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.yaml"
-                EOT
+                    EOT
         }
     }
 }
