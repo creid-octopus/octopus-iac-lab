@@ -69,7 +69,7 @@ process {
                     LEAF="gitops/applications/randomquotes/#{Source}/#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}.yaml"
 
                     WORK=$(mktemp -d)
-                    git clone "https://x-access-token:#{GitHub.Token}@github.com/vlussenburg/octopus-iac-lab.git" "$WORK"
+                    git clone "https://x-access-token:#{GitHub.Token}@github.com/creid-octopus/octopus-iac-lab.git" "$WORK"
                     cd "$WORK"
                     git config user.email "octopus@octopus.com"
                     git config user.name  "Octopus"

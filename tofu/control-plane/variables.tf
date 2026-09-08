@@ -18,7 +18,7 @@ variable "github_pat" {
 variable "github_username" {
   type        = string
   description = "GitHub username paired with the PAT. Anything works for PAT auth on the CaC credential, but GHCR pulls require the actual username."
-  default     = "vlussenburg"
+  default     = "creid-octopus"
 }
 
 variable "cac_repo_url" {

@@ -53,7 +53,7 @@ process {
                     echo "Preview $SLUG (image #{Octopus.Release.Number}) ready."
                     echo "  URL:       http://octopus-randomquotes-#{Source}-preview-$SLUG.localtest.me:8080"
                     echo "  Namespace: randomquotes-#{Source}-preview-$SLUG"
-                    echo "  Image:     ghcr.io/vlussenburg/octopus-iac-lab:#{Octopus.Release.Number}"
+                    echo "  Image:     ghcr.io/creid-octopus/octopus-iac-lab:#{Octopus.Release.Number}"
                     echo ""
                     echo "Argo's parallel preview: http://argo-preview-pr-$PRNUM.localtest.me:8080"
                     echo "Argo CD UI:               http://argocd.localtest.me:8080"

@@ -4,5 +4,5 @@
 # hand-edit unless you know what you're doing; the next deploy will
 # overwrite. Leaf Apps reference this via spec.source.helm.valueFiles.
 image:
-  repository: vlussenburg/octopus-iac-lab
+  repository: creid-octopus/octopus-iac-lab
   tag: "1.1.199"

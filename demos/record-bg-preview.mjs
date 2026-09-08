@@ -123,7 +123,7 @@ async function buildAndWaitForRelease(previousTag, timeoutMs = 8 * 60_000) {
 
   log("dispatching build.yml workflow_dispatch on main");
   const dispatch = await fetch(
-    "https://api.github.com/repos/vlussenburg/octopus-iac-lab/actions/workflows/build.yml/dispatches",
+    "https://api.github.com/repos/creid-octopus/octopus-iac-lab/actions/workflows/build.yml/dispatches",
     {
       method: "POST",
       headers: { Authorization: `Bearer ${PAT}`, Accept: "application/vnd.github+json" },

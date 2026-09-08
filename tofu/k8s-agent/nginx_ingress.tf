@@ -17,23 +17,34 @@
 # HTTPS is disabled (`controller.service.enableHttps=false`) — we don't
 # terminate TLS for the lab and keeping :8443 free lets the Octopus compose
 # container bind it for the gateway gRPC port without a host-port collision.
+locals {
+  # helm upgrade --install is idempotent, but null_resource only re-runs
+  # local-exec when `triggers` changes, not when the command text itself
+  # changes. Hashing the rendered command means editing the --set flags
+  # below always re-applies on the next apply, instead of silently no-op'ing.
+  nginx_ingress_command = <<-EOT
+    helm upgrade --install ingress-nginx ingress-nginx \
+      --repo https://kubernetes.github.io/ingress-nginx \
+      --version "${var.nginx_ingress_chart_version}" \
+      --namespace ingress-nginx --create-namespace \
+      --kube-context "${var.kube_context}" \
+      --set controller.service.type=LoadBalancer \
+      --set controller.service.ports.http=8080 \
+      --set controller.service.enableHttps=false \
+      --set controller.hostPort.enabled=true \
+      --set controller.hostPort.ports.http=8080 \
+      --atomic --wait
+  EOT
+}
+
 resource "null_resource" "nginx_ingress" {
   triggers = {
     chart_version = var.nginx_ingress_chart_version
     kube_context  = var.kube_context
+    command_hash  = sha256(local.nginx_ingress_command)
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
-      helm upgrade --install ingress-nginx ingress-nginx \
-        --repo https://kubernetes.github.io/ingress-nginx \
-        --version "${var.nginx_ingress_chart_version}" \
-        --namespace ingress-nginx --create-namespace \
-        --kube-context "${var.kube_context}" \
-        --set controller.service.type=LoadBalancer \
-        --set controller.service.ports.http=8080 \
-        --set controller.service.enableHttps=false \
-        --atomic --wait
-    EOT
+    command = local.nginx_ingress_command
   }
 }

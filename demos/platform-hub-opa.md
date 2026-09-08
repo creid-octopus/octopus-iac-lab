@@ -82,20 +82,20 @@ FAIL - - main - tier=free allows max 1 replicas, got 5
 
 Exit code: `1`. In Octopus this fails the deploy step before any manifest hits the cluster.
 
-### Image registry rule — only ghcr.io/vlussenburg
+### Image registry rule — only ghcr.io/creid-octopus
 
 Synthetic manifest pulling `docker.io/library/nginx:1.25`:
 
 ```
-FAIL - - main - container[0] image "docker.io/library/nginx:1.25" not from an allowed registry (["ghcr.io/vlussenburg/"])
+FAIL - - main - container[0] image "docker.io/library/nginx:1.25" not from an allowed registry (["ghcr.io/creid-octopus/"])
 ```
 
 ### :latest tag rule
 
-Synthetic manifest using `ghcr.io/vlussenburg/octopus-iac-lab:latest`:
+Synthetic manifest using `ghcr.io/creid-octopus/octopus-iac-lab:latest`:
 
 ```
-FAIL - - main - container[0] uses :latest tag (image="ghcr.io/vlussenburg/octopus-iac-lab:latest")
+FAIL - - main - container[0] uses :latest tag (image="ghcr.io/creid-octopus/octopus-iac-lab:latest")
 ```
 
 ### Multi-violation manifest

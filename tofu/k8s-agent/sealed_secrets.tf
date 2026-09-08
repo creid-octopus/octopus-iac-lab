@@ -63,7 +63,7 @@ resource "null_resource" "sealed_secrets" {
   provisioner "local-exec" {
     command = <<-EOT
       helm upgrade --install sealed-secrets sealed-secrets \
-        --repo https://bitnami-labs.github.io/sealed-secrets \
+        --repo https://bitnami.github.io/sealed-secrets \
         --version "${var.sealed_secrets_chart_version}" \
         --namespace kube-system \
         --kube-context "${var.kube_context}" \

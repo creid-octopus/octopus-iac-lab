@@ -128,7 +128,7 @@ jobs:
           # Package ID must match the value Octopus stores on the GHCR feed —
           # that's the image repo WITHOUT the `ghcr.io/` registry prefix
           # (the prefix lives on the feed, not the package). The OCL
-          # references the same shape: `package_id = "vlussenburg/octopus-iac-lab"`.
+          # references the same shape: `package_id = "creid-octopus/octopus-iac-lab"`.
           # Mismatching `ghcr.io/...` here would push valid build info into
           # Octopus, but the release-snapshot lookup at release-create time
           # wouldn't match and the release page would render empty.

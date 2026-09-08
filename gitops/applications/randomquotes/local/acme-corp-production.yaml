@@ -24,7 +24,7 @@ metadata:
 spec:
   project: local
   source:
-    repoURL: https://github.com/vlussenburg/octopus-iac-lab
+    repoURL: https://github.com/creid-octopus/octopus-iac-lab
     path: gitops/charts/randomquotes
     targetRevision: HEAD
     helm:

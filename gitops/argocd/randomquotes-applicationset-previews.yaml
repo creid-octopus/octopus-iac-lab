@@ -26,7 +26,7 @@ spec:
   generators:
     - pullRequest:
         github:
-          owner: vlussenburg
+          owner: creid-octopus
           repo: octopus-iac-lab
           tokenRef:
             secretName: github-pat
@@ -51,7 +51,7 @@ spec:
     spec:
       project: local
       source:
-        repoURL: https://github.com/vlussenburg/octopus-iac-lab
+        repoURL: https://github.com/creid-octopus/octopus-iac-lab
         # Deploy what's IN the PR's branch, not main. Edits propagate
         # within Argo's sync interval (~3 min default).
         targetRevision: '{{ .branch }}'
@@ -71,7 +71,7 @@ spec:
             watermark: 'PREVIEW · PR #{{ .number }}'
             host: 'argo-preview-pr-{{ .number }}.localtest.me'
             image:
-              repository: vlussenburg/octopus-iac-lab
+              repository: creid-octopus/octopus-iac-lab
               # Pin to the per-PR tag pushed by build.yml on pull_request.
               # Without this, previews would render :latest from main and
               # miss any HTML / app changes made in the branch.

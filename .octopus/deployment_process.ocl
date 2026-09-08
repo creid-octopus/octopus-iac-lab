@@ -106,7 +106,7 @@ step "deploy-manifests" {
         packages "randomquotes-image" {
             acquisition_location = "NotAcquired"
             feed = "ghcr"
-            package_id = "vlussenburg/octopus-iac-lab"
+            package_id = "creid-octopus/octopus-iac-lab"
             properties = {
                 Extract = "False"
                 Purpose = "DockerImageReference"
@@ -159,7 +159,7 @@ step "update-argo-cd-application-image-tags" {
         packages "octopus-iac-lab" {
             acquisition_location = "NotAcquired"
             feed = "ghcr"
-            package_id = "vlussenburg/octopus-iac-lab"
+            package_id = "creid-octopus/octopus-iac-lab"
             properties = {
                 Extract = "False"
                 Purpose = "DockerImageReference"

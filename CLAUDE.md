@@ -100,7 +100,7 @@ OCL pool references use slugs (e.g. `Project.WorkerPool = "prod-pool"`); naming 
 
 ### Image + CI
 
-- App image is **built from this repo** by `.github/workflows/build.yml` and pushed to `ghcr.io/vlussenburg/octopus-iac-lab`. The control-plane stack registers GHCR as an external feed; the deployment process pulls the image from there.
+- App image is **built from this repo** by `.github/workflows/build.yml` and pushed to `ghcr.io/creid-octopus/octopus-iac-lab`. The control-plane stack registers GHCR as an external feed; the deployment process pulls the image from there.
 - `.github/workflows/release.yml` is a reusable workflow called by `build.yml` once per Octopus target via a job matrix (SaaS + Local). It creates a release on the chosen Octopus and deploys it tenanted via `OctopusDeploy/deploy-release-tenanted-action@v3` (the non-tenanted action doesn't support tenants).
 - `build.yml` also pushes **Octopus Build Information** to both Octopus targets after the image push (`OctopusDeploy/push-build-information-action@v4`), so the release page shows commits + a deep link back to the GHA run.
 - Local Octopus is reachable from GHA via Tailscale Funnel; if the funnel is down the local matrix leg cleanly skips with `continue-on-error: true`.
@@ -154,7 +154,7 @@ The `OctopusDeploy/octopusdeploy` provider has zero Argo CD resources as of v1.1
 
       package_parameter "AppImage" {                # one per Package-typed template parameter
           feed       = "ghcr"                       # filled in by the project (template leaves these blank)
-          package_id = "vlussenburg/octopus-iac-lab"
+          package_id = "creid-octopus/octopus-iac-lab"
       }
   }
   ```

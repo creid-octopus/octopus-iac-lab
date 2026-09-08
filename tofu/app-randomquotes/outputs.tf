@@ -1,5 +1,5 @@
 output "project_url" {
-  value       = "${var.octopus_url}/app#/${octopusdeploy_project.randomquotes.space_id}/projects/${octopusdeploy_project.randomquotes.id}/deployments/process"
+  value       = "${var.octopus_url}/app#/${data.terraform_remote_state.space.outputs.space_id}/projects/${octopusdeploy_project.randomquotes.id}/deployments/process"
   description = "Open the randomquotes project in the Octopus UI."
 }
 

@@ -16,15 +16,15 @@ resource "octopusdeploy_lifecycle" "dev_to_production" {
     is_optional_phase                     = false
   }
 
-  release_retention_policy {
-    unit                = "Days"
-    quantity_to_keep    = 30
-    should_keep_forever = false
+  release_retention_with_strategy {
+    strategy         = "Count"
+    quantity_to_keep = 30
+    unit             = "Days"
   }
 
-  tentacle_retention_policy {
-    unit                = "Days"
-    quantity_to_keep    = 30
-    should_keep_forever = false
+  tentacle_retention_with_strategy {
+    strategy         = "Count"
+    quantity_to_keep = 30
+    unit             = "Days"
   }
 }

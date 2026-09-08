@@ -6,7 +6,7 @@
 # the Octopus side: even if a project somewhere else in the Space tried to
 # point at a different repo with this credential, Octopus would refuse.
 # Defence-in-depth on top of the PAT's GitHub-side scope (which should also
-# be a fine-grained PAT limited to vlussenburg/octopus-iac-lab Contents R/W).
+# be a fine-grained PAT limited to creid-octopus/octopus-iac-lab Contents R/W).
 resource "octopusdeploy_git_credential" "github_pat" {
   name        = "GitHub PAT (octopus-iac-lab)"
   description = "Personal access token used by Octopus for Config-as-Code."

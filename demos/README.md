@@ -63,4 +63,4 @@ The `demo/servicenow-cr-gate` flow has full orchestration in [`capture-snow.mjs`
 | `ARGOCD_URL` | `http://argocd.localtest.me:8080` |
 | `ARGOCD_USER` / `ARGOCD_PASS` | `admin` / `Password01!` (static lab password, set by `tofu/argocd/`; override via `TF_VAR_argocd_password`) |
 
-The published PNG/WebM set (referenced from each PR body) lives on the [`demo-screenshots`](https://github.com/vlussenburg/octopus-iac-lab/releases/tag/demo-screenshots) release.
+The published PNG/WebM set (referenced from each PR body) lives on the [`demo-screenshots`](https://github.com/creid-octopus/octopus-iac-lab/releases/tag/demo-screenshots) release.

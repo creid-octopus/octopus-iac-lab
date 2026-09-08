@@ -4,7 +4,7 @@ The Random Quotes K8s sample app — the artefact Octopus deploys.
 
 | File | Purpose |
 |------|---------|
-| [`Dockerfile`](Dockerfile) | nginx + static `index.html`, with a `VERSION` build-arg that gets baked into the page footer. Built + pushed to `ghcr.io/vlussenburg/octopus-iac-lab` by [`../.github/workflows/build.yml`](../.github/workflows/build.yml). |
+| [`Dockerfile`](Dockerfile) | nginx + static `index.html`, with a `VERSION` build-arg that gets baked into the page footer. Built + pushed to `ghcr.io/creid-octopus/octopus-iac-lab` by [`../.github/workflows/build.yml`](../.github/workflows/build.yml). |
 | [`index.html`](index.html) | The actual page. Reads `/config.json` at startup for tenant/mood/icon/colour/watermark/maintenance overrides — that file is materialised by Octopus at deploy time via a ConfigMap. Honours a `maintenance` overlay used by the `Maintenance Mode On` runbook. |
 
 > **Where are the K8s manifests?** Two places — Octopus's K8s agent path inlines them in [`../.octopus/deployment_process.ocl`](../.octopus/deployment_process.ocl), and the Argo CD path renders them from a helm chart at [`../gitops/charts/randomquotes/`](../gitops/charts/randomquotes/) instantiated by the leaf Applications under [`../gitops/applications/randomquotes/{local,saas}/`](../gitops/applications/) with per-tenant values.

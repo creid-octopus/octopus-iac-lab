@@ -25,6 +25,9 @@ locals {
 
   # Flatten to (tenant, template) pairs so one resource block covers every
   # branding value × tenant.
+  # Skips any pair whose template isn't declared (with a `prompt {}` block)
+  # in .octopus/variables.ocl yet. Add the missing prompt blocks there to
+  # light these back up — no change needed here once they exist.
   tenant_branding_vars = merge([
     for tkey, b in local.tenant_branding : {
       for pair in [
@@ -34,9 +37,10 @@ locals {
         { tmpl = "Brand.Color", value = b.color },
       ] : "${tkey}.${pair.tmpl}" => {
         tenant_key  = tkey
-        template_id = local.template_ids[pair.tmpl]
+        template_id = lookup(local.template_ids, pair.tmpl, null)
         value       = pair.value
       }
+      if lookup(local.template_ids, pair.tmpl, null) != null
     }
   ]...)
 }

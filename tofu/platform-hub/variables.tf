@@ -24,7 +24,7 @@ variable "github_pat" {
 variable "github_username" {
   type        = string
   description = "Username paired with the PAT. Anything works for GitHub PAT auth — the token carries the identity."
-  default     = "vlussenburg"
+  default     = "creid-octopus"
 }
 
 variable "ph_repo_url" {

@@ -100,54 +100,55 @@ resource "helm_release" "argocd" {
 # Bootstrap Application — points at `gitops/argocd/`, which holds the
 # per-Octopus App-of-Apps roots and the argocd-server Ingress.
 #
-# Lives outside the helm_release's `extraObjects` on purpose: when
-# helm_release.argocd is `atomic = true`, putting the Application here
-# means Helm renders + applies it during the SAME pass as the chart's
-# CRDs. On a fresh cluster the Application kind doesn't exist yet, so
-# the install fails ("ensure CRDs are installed first") and atomic
-# rollback removes the CRDs that *did* install — every retry is back
-# to square one.
-#
-# Splitting it into its own kubernetes_manifest with depends_on means:
-# pass 1 = chart installs CRDs cleanly; pass 2 = bootstrap Application
-# created against now-existing CRDs.
-resource "kubernetes_manifest" "argocd_bootstrap" {
+# Applied via `kubectl apply` (null_resource + local-exec), not
+# `kubernetes_manifest`. The `kubernetes_manifest` resource validates a
+# manifest's GVK against the cluster's API discovery at plan/apply time —
+# on a truly fresh cluster the Application/AppProject CRDs (installed by
+# this same helm_release, in this same run) aren't visible yet, so it
+# fails with "no matches for kind X in group argoproj.io" even with a
+# correct depends_on. kubectl re-discovers the API fresh on every
+# invocation, so it doesn't hit this timing problem. Matches the pattern
+# already used for nginx-ingress/NFS CSI/Sealed Secrets in tofu/k8s-agent,
+# and the working reference in iac-octopus/argocd/terraform.
+resource "null_resource" "argocd_bootstrap" {
   count = local.install_argocd_final ? 1 : 0
 
-  manifest = {
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "Application"
-    metadata = {
-      name      = "argocd-bootstrap"
-      namespace = var.argocd_namespace
-      labels = {
-        "lab.octopus.com/role" = "argocd-bootstrap"
-      }
-      annotations = {
-        "argocd.argoproj.io/sync-options" = "Prune=false"
-      }
-    }
-    spec = {
-      project = "default"
-      source = {
-        repoURL        = "https://github.com/vlussenburg/octopus-iac-lab"
-        path           = "gitops/argocd"
-        targetRevision = "HEAD"
-      }
-      destination = {
-        server    = "https://kubernetes.default.svc"
-        namespace = var.argocd_namespace
-      }
-      syncPolicy = {
-        automated = {
-          prune    = true
-          selfHeal = true
-        }
-        syncOptions = [
-          "ApplyOutOfSyncOnly=true",
-        ]
-      }
-    }
+  triggers = {
+    argocd_release_id = helm_release.argocd[0].id
+    kube_context      = var.kube_context
+    namespace         = var.argocd_namespace
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      cat <<'YAML' | kubectl --context "${var.kube_context}" apply -f -
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: argocd-bootstrap
+        namespace: ${var.argocd_namespace}
+        labels:
+          lab.octopus.com/role: argocd-bootstrap
+        annotations:
+          argocd.argoproj.io/sync-options: Prune=false
+      spec:
+        project: default
+        source:
+          repoURL: https://github.com/creid-octopus/octopus-iac-lab
+          path: gitops/argocd
+          targetRevision: HEAD
+        destination:
+          server: https://kubernetes.default.svc
+          namespace: ${var.argocd_namespace}
+        syncPolicy:
+          automated:
+            prune: true
+            selfHeal: true
+          syncOptions:
+            - ApplyOutOfSyncOnly=true
+      YAML
+    EOT
   }
 
   depends_on = [helm_release.argocd]
@@ -158,22 +159,41 @@ resource "kubernetes_manifest" "argocd_bootstrap" {
 # move into `local` / `saas` (spec.project) in gitops; each Gateway's account
 # can only `get` Applications in its own project, so the local Octopus stops
 # surfacing saas leaves and vice versa.
-resource "kubernetes_manifest" "appproject" {
+#
+# Same kubectl-apply reasoning as argocd_bootstrap above.
+resource "null_resource" "appproject" {
   for_each = local.install_argocd_final ? toset(["local", "saas"]) : toset([])
 
-  manifest = {
-    apiVersion = "argoproj.io/v1alpha1"
-    kind       = "AppProject"
-    metadata = {
-      name      = each.key
-      namespace = var.argocd_namespace
-    }
-    spec = {
-      sourceRepos                = ["*"]
-      destinations               = [{ server = "*", namespace = "*" }]
-      clusterResourceWhitelist   = [{ group = "*", kind = "*" }]
-      namespaceResourceWhitelist = [{ group = "*", kind = "*" }]
-    }
+  triggers = {
+    argocd_release_id = helm_release.argocd[0].id
+    kube_context      = var.kube_context
+    namespace         = var.argocd_namespace
+    project           = each.key
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      set -e
+      cat <<'YAML' | kubectl --context "${var.kube_context}" apply -f -
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: ${each.key}
+        namespace: ${var.argocd_namespace}
+      spec:
+        sourceRepos:
+          - "*"
+        destinations:
+          - server: "*"
+            namespace: "*"
+        clusterResourceWhitelist:
+          - group: "*"
+            kind: "*"
+        namespaceResourceWhitelist:
+          - group: "*"
+            kind: "*"
+      YAML
+    EOT
   }
 
   depends_on = [helm_release.argocd]

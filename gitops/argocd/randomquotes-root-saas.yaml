@@ -12,7 +12,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/vlussenburg/octopus-iac-lab
+    repoURL: https://github.com/creid-octopus/octopus-iac-lab
     path: gitops/applications/randomquotes/saas
     targetRevision: HEAD
   destination:

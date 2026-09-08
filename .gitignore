@@ -26,3 +26,4 @@ demos/package*.json
 .DS_Store
 demos/out/
 .claude/
+license.xml
