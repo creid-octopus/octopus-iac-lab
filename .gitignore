@@ -27,3 +27,5 @@ demos/package*.json
 demos/out/
 .claude/
 license.xml
+docs/conference-demo-readiness.md
+docs/local-stack-overview.md
