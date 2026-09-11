@@ -17,7 +17,7 @@ metadata:
     # deployment_process.ocl), so this annotation is currently a no-op —
     # kept for documentation and to ease swapping back to annotation-driven
     # discovery if we ever need per-Application path overrides.
-    argo.octopus.com/image-replace-paths: "ghcr.io/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+    argo.octopus.com/image-replace-paths: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
   labels:
     lab.octopus.com/source: local
     lab.octopus.com/tenant: acme-corp

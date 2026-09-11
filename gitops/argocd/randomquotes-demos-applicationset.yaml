@@ -41,13 +41,21 @@ spec:
           - matrix:
               generators:
                 - list:
-                    # Deliberately empty (2026-09-08). All 6 flavours were
-                    # filling the local cluster (48 Applications, 100+ pods)
-                    # and their Octopus-side projects mostly don't work yet
-                    # anyway (missing channels/step templates — see
-                    # docs/conference-demo-readiness.md). Re-add a flavour
-                    # here once its Octopus project is actually fixed.
-                    elements: []
+                    # Add a flavour here only once its Octopus project
+                    # actually applies. All 6 at once filled the local
+                    # cluster (48 Applications, 100+ pods) and most of the
+                    # projects still don't work (missing channels/step
+                    # templates — see docs/conference-demo-readiness.md).
+                    #
+                    # Each flavour costs 8 Applications (4 tenantEnv × 2
+                    # sources), but only the 2 Dev ones render pods: the
+                    # production values files ship `image.tag: ""` as a
+                    # sentinel, so Production renders no Deployment until
+                    # Octopus promotes a release.
+                    elements:
+                      - flavour: process-template
+                        branch: HEAD
+                        previewEnabled: "false"
                     # - flavour: blue-green
                     #   branch: refs/heads/demo/blue-green
                     #   previewEnabled: "false"
@@ -58,9 +66,6 @@ spec:
                     #   branch: refs/heads/demo/canary
                     #   previewEnabled: "false"
                     # - flavour: servicenow-cr-gate
-                    #   branch: HEAD
-                    #   previewEnabled: "false"
-                    # - flavour: process-template
                     #   branch: HEAD
                     #   previewEnabled: "false"
                     # - flavour: smoke-step-template
@@ -112,6 +117,20 @@ spec:
         argo.octopus.com/project: '{{.flavour}}-randomquotes'
         argo.octopus.com/environment: '{{.envLower}}'
         argo.octopus.com/tenant: '{{.tenant}}'
+        # Tells Octopus which Helm value holds the image tag. Required here
+        # because the k8s-tenanted-app process template's AppImage package
+        # has no HelmReplacementPath — with neither set, the step finds no
+        # path and the tag update is a no-op.
+        #
+        # The registry MUST be part of the expression: Octopus matches the
+        # fully qualified name against the step's package and skips
+        # replacement when the registry differs. Hardcoding `ghcr.io` here
+        # breaks the moment `make gitea-enable` repoints the chart.
+        #
+        # The backtick raw string escapes this from the ApplicationSet's own
+        # Go templating (goTemplate: true), so the `{{ .Values… }}` text
+        # reaches the annotation verbatim for Octopus to evaluate.
+        argo.octopus.com/image-replace-paths: '{{ `{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}` }}'
       labels:
         lab.octopus.com/source: '{{.source}}'
         lab.octopus.com/tenant: '{{.tenant}}'
