@@ -1,34 +1,44 @@
 name = "Manual intervention required"
+description = "Requires manual intervention steps to be present and not skipped on deployments to Production environments."
 violation_action = "block"
+violation_reason = "Deployments to production require Manual Intervention steps to be enabled and not skipped."
 
 conditions {
     rego = <<-EOT
             package manual_intervention_required
             
-            # Default: Deny all
-            default result := {"allowed": false}
+            # No `action` set anywhere, deliberately: the policy's Violation action field
+            # stays authoritative, so warn -> block is a metadata change, not a republish.
+            default result := {
+            	"allowed": false,
+            	"reason": "Production deployments must include an enabled manual intervention step.",
+            }
             
-            # Helper: True if any manual intervention step is present in the skipped steps list
-            
-            manual_intervention_skipped if {
+            # A step that actually gates: manual, enabled, and not skipped for this run.
+            valid_approval_step if {
             	some step in input.Steps
+            	step.ActionType == "Octopus.Manual"
+            	step.Enabled
+            	not step.Id in input.SkippedSteps
+            }
+            
+            # Someone explicitly skipped an approval when creating the deployment.
+            approval_skipped if {
+            	some step in input.Steps
+            	step.ActionType == "Octopus.Manual"
             	step.Id in input.SkippedSteps
-            	step.ActionType == "Octopus.Manual"
             }
             
-            # Allow: Manual intervention steps exist and none are being bypassed
             result := {"allowed": true} if {
-            	some step in input.Steps
-            	step.ActionType == "Octopus.Manual"
-            	not manual_intervention_skipped
+            	valid_approval_step
+            	not approval_skipped
             }
             
-            # Deny: Block deployment if manual intervention is bypassed
             result := {
             	"allowed": false,
-            	"reason": "Manual intervention steps cannot be skipped in this environment",
+            	"reason": "Manual intervention steps cannot be skipped when deploying to this environment.",
             } if {
-            	manual_intervention_skipped
+            	approval_skipped
             }
             EOT
 }
@@ -37,16 +47,13 @@ scope {
     rego = <<-EOT
             package manual_intervention_required
             
-            default evaluate := true
+            default evaluate := false
             
-            # The following are examples of available scoping options:
-            # evaluate if {    
-            	# Scope evaluation by Environment name    
-            	# input.Environment.Name == "<environment-name>"    
-            	# Scope evaluation to Space Id    
-            	# input.Space.Id == "<space-id>"
-            	# Scope evaluation to multiple Spaces
-                # input.Project.Slug in ["<project-slug>", "<project-slug2>"]
-            # }
+            # Production deployments in this lab's space only. Dev stays unblocked so the
+            # normal build → auto-deploy-to-Dev loop keeps working.
+            evaluate if {
+                input.Environment.Name == "Production"
+                input.Space.Name == "IaC Sandbox"
+            }
             EOT
 }
