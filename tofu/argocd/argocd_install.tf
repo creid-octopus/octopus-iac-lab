@@ -117,6 +117,7 @@ resource "null_resource" "argocd_bootstrap" {
     argocd_release_id = helm_release.argocd[0].id
     kube_context      = var.kube_context
     namespace         = var.argocd_namespace
+    repo_url          = var.gitops_repo_url
   }
 
   provisioner "local-exec" {
@@ -135,7 +136,7 @@ resource "null_resource" "argocd_bootstrap" {
       spec:
         project: default
         source:
-          repoURL: https://github.com/creid-octopus/octopus-iac-lab
+          repoURL: ${var.gitops_repo_url}
           path: gitops/argocd
           targetRevision: HEAD
         destination:

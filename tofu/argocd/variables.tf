@@ -33,6 +33,12 @@ variable "octopus_grpc_plaintext" {
   default     = false
 }
 
+variable "gitops_repo_url" {
+  type        = string
+  description = "Repo the bootstrap Application syncs gitops/argocd/ from. Overridden to the local Gitea URL by gitea.auto.tfvars when running offline (see docs/local-gitea.md)."
+  default     = "https://github.com/creid-octopus/octopus-iac-lab"
+}
+
 variable "kube_context" {
   description = "kubeconfig context for the cluster. Defaults to docker-desktop."
   type        = string

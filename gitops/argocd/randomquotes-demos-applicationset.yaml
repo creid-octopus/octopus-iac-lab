@@ -121,7 +121,7 @@ spec:
       # the matching Gateway's RBAC-scoped account surfaces only its own side.
       project: '{{.source}}'
       source:
-        repoURL: https://github.com/creid-octopus/octopus-iac-lab
+        repoURL: http://host.docker.internal:3000/admin/octopus-iac-lab
         # Each flavour's chart is the source of truth on its own branch.
         # The Octopus auto-update step also commits image.tag updates
         # back to THIS branch — keeping the demo branch self-contained.

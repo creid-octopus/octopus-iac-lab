@@ -51,7 +51,7 @@ spec:
     spec:
       project: local
       source:
-        repoURL: https://github.com/creid-octopus/octopus-iac-lab
+        repoURL: http://host.docker.internal:3000/admin/octopus-iac-lab
         # Deploy what's IN the PR's branch, not main. Edits propagate
         # within Argo's sync interval (~3 min default).
         targetRevision: '{{ .branch }}'

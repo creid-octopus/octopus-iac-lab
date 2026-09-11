@@ -3,6 +3,8 @@
 
 SHELL := /bin/bash
 COMPOSE := docker compose --env-file .env -f compose/docker-compose.yml
+# Separate compose project — see the header of compose/gitea.yaml for why.
+GITEA_COMPOSE := docker compose --env-file .env -f compose/gitea.yaml
 SPACE_DIR := tofu/space
 CP_DIR := tofu/control-plane
 PH_DIR := tofu/platform-hub
@@ -33,11 +35,18 @@ define load_env
 	       TF_VAR_enable_platform_hub="$${OCTOPUS_PLATFORM_HUB_ENABLED:-true}" \
 	       TF_VAR_space_is_default="$${OCTOPUS_SPACE_IS_DEFAULT:-true}" \
 	       TF_VAR_demo_branches="$$DEMO_BRANCHES" \
-	       TF_VAR_sealed_secrets_tls_b64="$${SEALED_SECRETS_TLS_B64:-}";
+	       TF_VAR_sealed_secrets_tls_b64="$${SEALED_SECRETS_TLS_B64:-}"; \
+	if [ "$${GITEA_ENABLED:-false}" = "true" ]; then \
+	  [ -n "$${GITEA_TOKEN:-}" ] || { echo "GITEA_ENABLED=true but GITEA_TOKEN is empty — run 'make gitea-bootstrap'."; exit 1; }; \
+	  export TF_VAR_github_username="$${GITEA_ADMIN_USER:-admin}" \
+	         TF_VAR_github_pat="$$GITEA_TOKEN"; \
+	fi;
 endef
 
 .PHONY: help \
         up down logs ps nuke \
+        gitea-up gitea-down gitea-nuke gitea-logs gitea-bootstrap gitea-push \
+        gitea-enable gitea-disable open \
         bootstrap master-key mint-api-key ensure-api-key \
         space-init space-plan space-apply space-destroy space-fmt space-validate \
         cp-init cp-plan cp-apply cp-destroy cp-fmt cp-validate \
@@ -50,6 +59,9 @@ endef
 
 help:
 	@echo "compose/              : up | down | logs | ps | nuke      (local self-host only)"
+	@echo "local gitea (offline) : gitea-up | gitea-bootstrap | gitea-push | gitea-logs | gitea-down | gitea-nuke"
+	@echo "  git backend switch  : gitea-enable (point lab at gitea) | gitea-disable (back to github)"
+	@echo "open                  : open Octopus + Argo CD + Gitea in your browser (skips anything that's down)"
 	@echo "bootstrap             : bootstrap (fresh clone → running lab) | master-key | mint-api-key (local-only)"
 	@echo "deploys come from CI: push to main on github → .github/workflows/build.yml → release.yml"
 	@echo "tofu/space/           : space-init | space-plan | space-apply | space-destroy | space-fmt | space-validate"
@@ -90,6 +102,61 @@ nuke:
 		[ "$$ans" = "y" ] || [ "$$ans" = "yes" ]; \
 	fi
 	$(COMPOSE) down -v --remove-orphans
+
+# --- local gitea (offline git, opt-in) ------------------------------------
+#
+# Ordering matters: gitea joins the main stack's network as an external
+# network, so `make up` has to have created it first. gitea-up says so
+# rather than failing with docker's less obvious "network not found".
+
+gitea-up:
+	@docker network inspect selfhost-setup_default >/dev/null 2>&1 || { \
+		echo "Network selfhost-setup_default doesn't exist yet — run 'make up' first."; exit 1; }
+	$(GITEA_COMPOSE) up -d --wait
+	@echo "Gitea up at http://localhost:3000 — now run 'make gitea-bootstrap'"
+
+gitea-bootstrap:
+	$(load_env) ./compose/configure-gitea.sh
+
+# Push the current commit to gitea/main. The lab reads from gitea, so any
+# OCL or gitops change has to land here to take effect, same as pushing to
+# github in the online setup.
+gitea-push:
+	@if [ -n "$$(git status --porcelain -- gitops .octopus)" ]; then \
+		echo "Uncommitted changes under gitops/ or .octopus/ — git pushes commits, not your working tree,"; \
+		echo "so these would NOT reach Gitea and Octopus/Argo would keep reading the old URLs:"; \
+		git status --short -- gitops .octopus | sed 's/^/  /'; \
+		echo "Commit them first (e.g. git commit -am 'Point lab at local Gitea'), or re-run with FORCE=1."; \
+		[ -n "$$FORCE" ] || exit 1; \
+	fi
+	$(load_env) git push "http://$${GITEA_ADMIN_USER:-admin}:$${GITEA_TOKEN}@localhost:3000/$${GITEA_ADMIN_USER:-admin}/$${GITEA_REPO:-octopus-iac-lab}.git" HEAD:refs/heads/main
+
+# Point Octopus CaC, Platform Hub, and Argo CD at Gitea (or back at github).
+# Rewrites gitops/ + .octopus/ URLs in the working tree and generates
+# per-stack gitea.auto.tfvars — see the script header for why both are needed.
+gitea-enable:
+	$(load_env) ./compose/set-git-backend.sh gitea
+
+gitea-disable:
+	$(load_env) ./compose/set-git-backend.sh github
+
+gitea-logs:
+	$(GITEA_COMPOSE) logs -f gitea
+
+# Open Octopus + Argo CD + Gitea in the default browser, skipping whatever
+# isn't currently up.
+open:
+	@./compose/open-uis.sh
+
+gitea-down:
+	$(GITEA_COMPOSE) down
+
+gitea-nuke:
+	@if [ -z "$$FORCE" ]; then \
+		read -p "This deletes the local Gitea instance and all repos in it. Continue? [y/N] " ans && \
+		[ "$$ans" = "y" ] || [ "$$ans" = "yes" ]; \
+	fi
+	$(GITEA_COMPOSE) down -v --remove-orphans
 
 # --- tofu/space/ ----------------------------------------------------------
 
