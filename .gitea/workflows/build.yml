@@ -1,9 +1,9 @@
 # Offline port of .github/workflows/build.yml.
 #
-# Builds the randomquotes image and loads it straight into the Kubernetes
-# nodes. No registry involved, which is the whole point — there's no GHCR
-# reachable at a conference, and Gitea's own registry would need
-# insecure-registry configuration on the host docker daemon first.
+# Builds the randomquotes image, loads it into both Kubernetes nodes, AND
+# pushes it to Gitea's built-in registry. Both, deliberately: the registry
+# gives Octopus a feed to resolve package versions from, and the containerd
+# import means pods still start if a registry pull fails mid-demo.
 #
 # Every step is `run:`. Nothing uses `uses:`, deliberately: Gitea resolves
 # `uses:` references against github.com unless you mirror the action repos
@@ -12,11 +12,15 @@
 # docker, and curl — all present in the local job image.
 #
 # Differences from the GitHub version, and why:
-#   - no actions/checkout   -> git clone from Gitea over the shared network
-#   - no docker/login-action-> nothing to log into, there's no registry
-#   - no GHCR push          -> docker save + ctr import into each kind node
-#   - no push-build-information / create-release steps yet; Octopus can't see
-#     a package that isn't in a feed, which is the open Phase 3 question.
+#   - no actions/checkout    -> git clone from Gitea over the shared network
+#   - no docker/login-action -> plain `docker login` against Gitea
+#   - GHCR push              -> push to Gitea's registry + ctr import per node
+#   - no push-build-information / create-release steps; on the GitHub path an
+#     Octopus feed trigger mints the release when a new tag appears. Whether
+#     that trigger fires against the Gitea feed is untested.
+#
+# Secrets are LAB_GIT_TOKEN / LAB_GIT_USERNAME, not GITEA_*: Gitea reserves
+# the GITEA_ prefix for secret names and silently rejects it.
 
 name: CI / Build Image
 
@@ -28,7 +32,19 @@ on:
   workflow_dispatch:
 
 env:
+  # Local build tag. Kept short for the ctr-import path.
   IMAGE_NAME: octopus-iac-lab/randomquotes
+  # Registry path. MUST equal the `package_id` that
+  # .octopus/deployment_process.ocl uses, or the Octopus feed won't resolve
+  # the package. Offline that's admin/octopus-iac-lab (the Gitea admin's
+  # namespace); on github it's creid-octopus/octopus-iac-lab. The two differ,
+  # so set-git-backend.sh rewrites package_id as part of the switch.
+  #
+  # host.docker.internal, not gitea:3000 — Octopus queries this registry for
+  # versions AND kubelet pulls from it, so it has to resolve from both the
+  # compose network and the cluster.
+  REGISTRY: host.docker.internal:3000
+  REGISTRY_PATH: admin/octopus-iac-lab
   # Both nodes of the Docker Desktop kind-based cluster. A pod can be
   # scheduled on either, so the image has to exist on both or you get
   # ImagePullBackOff about half the time.
@@ -47,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           git clone --depth 1 \
-            "http://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_TOKEN }}@gitea:3000/admin/octopus-iac-lab.git" \
+            "http://${{ secrets.LAB_GIT_USERNAME }}:${{ secrets.LAB_GIT_TOKEN }}@gitea:3000/admin/octopus-iac-lab.git" \
             src
           cd src
           echo "cloned $(git rev-parse --short HEAD)"
@@ -101,12 +117,43 @@ jobs:
           done
           rm -f "$TAR"
 
+      - name: Push to the Gitea registry
+        # Gives Octopus a real feed to resolve package versions from, which
+        # is what lets the deployment process keep its `feed = "ghcr"` +
+        # package_id references unchanged between cloud and offline.
+        #
+        # Requires "insecure-registries": ["host.docker.internal:3000"] in
+        # Docker Desktop's engine config — the push is performed by the HOST
+        # daemon (this container just drives it over the mounted socket), so
+        # it's the host daemon that has to accept plain HTTP.
+        run: |
+          set -euo pipefail
+          REF="${REGISTRY}/${REGISTRY_PATH}"
+
+          echo "${{ secrets.LAB_GIT_TOKEN }}" \
+            | docker login "${REGISTRY}" -u "${{ secrets.LAB_GIT_USERNAME }}" --password-stdin
+
+          docker tag "${IMAGE_NAME}:${VERSION}" "${REF}:${VERSION}"
+          docker tag "${IMAGE_NAME}:${VERSION}" "${REF}:latest"
+          docker push "${REF}:${VERSION}"
+          docker push "${REF}:latest"
+
+          # Confirm the registry really has it, rather than trusting the push.
+          curl -fsS -u "${{ secrets.LAB_GIT_USERNAME }}:${{ secrets.LAB_GIT_TOKEN }}" \
+            "http://${REGISTRY}/v2/${REGISTRY_PATH}/tags/list" \
+            || { echo "ERROR: push reported success but the registry has no tags"; exit 1; }
+
       - name: Summary
         run: |
           cat <<SUMMARY
-              Image:  ${IMAGE_NAME}:${VERSION}
-              Loaded: ${KIND_NODES}
+              Local tag:  ${IMAGE_NAME}:${VERSION}
+              Registry:   ${REGISTRY}/${REGISTRY_PATH}:${VERSION}
+              Loaded into: ${KIND_NODES}
 
-              Deploy it by referencing that exact tag with
-              imagePullPolicy: IfNotPresent — there's no registry to pull from.
+              Octopus should now see version ${VERSION} of
+              ${REGISTRY_PATH} on the GHCR feed.
+
+              The image is BOTH in the registry and pre-loaded into
+              containerd. Belt and braces: if a registry pull fails mid-demo,
+              pods with imagePullPolicy IfNotPresent still start.
           SUMMARY

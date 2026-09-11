@@ -32,7 +32,7 @@ Three phases. Phase 1 is done and verifiable now; Phases 2 and 3 are scoped but 
 | 1 | Gitea running, bootstrapped, holding this repo | **Done, verified** |
 | 1b | Reversible switch of Octopus CaC, Platform Hub, and Argo CD onto Gitea | **Done** — `cp-apply`, `ph-apply`, `argo-apply` all clean against Gitea |
 | 1c | Backend-agnostic OCL (`Git.CloneUrl`) + upstream mirror (`gitea-mirror`) | **Done** |
-| 2 | Gitea Actions + `act_runner`, ported build workflow | **Built, not yet run** |
+| 2 | Gitea Actions + `act_runner`, ported build workflow | **Done** — builds offline and loads into both nodes, verified in-workflow |
 | 3 | Octopus feed / package reference for a registry-less image | Not started |
 
 ### Asymmetric defaults, and why
@@ -324,14 +324,42 @@ Substitute the real tag. `ok` means the whole chain works. `ErrImageNeverPull` m
 make runner-logs
 ```
 
-### The open question this leaves
+## Phase 3: Octopus feed against the Gitea registry
 
-The image is now in the cluster but **Octopus doesn't know it exists.** The deployment process pulls `creid-octopus/octopus-iac-lab` from the `ghcr` feed, which is unreachable offline. That's Phase 3, and the options are:
+Chosen approach: point the **same** Octopus feed at Gitea's built-in container registry rather than adding a second one, because the OCL references the feed by slug (`feed = "ghcr"`) and renaming the feed would silently break the deployment process.
 
-1. Point an Octopus Docker feed at Gitea's built-in container registry, and push there instead. Needs insecure-registry configuration on the host docker daemon, since Gitea is HTTP.
-2. Drop the package reference from the deployment process and pin the image tag directly with `imagePullPolicy: IfNotPresent`, which is what the loaded image already supports.
+**Confirmed: Octopus accepts a plain-HTTP registry.** The feed test passes against `http://host.docker.internal:3000`. That was the one thing that could have killed this approach, and it needed no Docker configuration to verify, since Octopus Server makes its own HTTP calls and `insecure-registries` only affects the docker CLI/daemon.
 
-Option 2 is less faithful to how the cloud path works but needs no daemon configuration.
+### What changed
+
+| Piece | Change |
+|---|---|
+| `tofu/control-plane/feeds.tf` | `feed_uri` is now `var.container_registry_url` (default `https://ghcr.io`) |
+| `git-backend.auto.tfvars` | Gitea mode adds `container_registry_url = "http://host.docker.internal:3000"` |
+| Feed credentials | None needed — the Makefile's existing `GITEA_ENABLED` swap already points `github_username`/`github_pat` at the Gitea admin and token |
+| `.octopus/deployment_process.ocl` | `package_id` flips between `creid-octopus/octopus-iac-lab` and `admin/octopus-iac-lab`, handled by `set-git-backend.sh` |
+| `.gitea/workflows/build.yml` | New push step, tagged `host.docker.internal:3000/admin/octopus-iac-lab` |
+
+The feed keeps the name "GHCR" even when pointed at Gitea. Misleading, but the slug derives from the name and the OCL references the slug, so renaming breaks deployments silently. Bad label beats broken pipeline.
+
+### Host prerequisite
+
+Docker Desktop → Settings → Docker Engine, then Apply & Restart:
+
+```json
+{ "insecure-registries": ["host.docker.internal:3000"] }
+```
+
+Needed because the **host daemon** performs the push (the job container just drives it over the mounted socket). Note this is machine-global, not scoped to this project, though it's narrow — one host:port.
+
+### Still outstanding
+
+**containerd on the kind nodes doesn't know the registry is plain HTTP**, so kubelet will refuse to pull from it even though Octopus resolves versions fine. Two consequences:
+
+1. That config needs writing into both nodes (`/etc/containerd/certs.d/...`) and it does **not** survive a Docker Desktop Kubernetes reset, so it belongs in `tofu/k8s-agent` as a `null_resource` rather than as a manual step.
+2. Until then, deployments work only because the workflow *also* imports the image into containerd directly, so `imagePullPolicy: IfNotPresent` finds it locally. That's the belt-and-braces worth keeping even after the registry pull works.
+
+Also untested: whether Octopus's feed trigger fires off a new tag appearing in the Gitea registry the way it does for GHCR. If it does, the CI-to-release path works unchanged. If not, the workflow needs an explicit release-creation step.
 
 ## Re-running and resetting
 

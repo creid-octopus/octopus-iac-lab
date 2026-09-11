@@ -80,7 +80,7 @@ curl -fsS -o /dev/null -X DELETE \
 GITEA_TOKEN="$(curl -fsS -X POST \
   -u "${GITEA_ADMIN_USER}:${GITEA_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"${TOKEN_NAME}\",\"scopes\":[\"write:repository\",\"write:user\",\"write:admin\",\"write:package\"]}" \
+  -d "{\"name\":\"${TOKEN_NAME}\",\"scopes\":[\"write:repository\",\"write:user\",\"write:organization\",\"write:package\",\"write:admin\",\"write:misc\"]}" \
   "${GITEA_URL}/api/v1/users/${GITEA_ADMIN_USER}/tokens" | jq -r '.sha1')"
 
 [ -n "${GITEA_TOKEN}" ] && [ "${GITEA_TOKEN}" != "null" ] || fail "could not mint a token"
@@ -100,11 +100,13 @@ info "written to .env as GITEA_TOKEN"
 # User-level, so every repo under this account sees them. The build workflow
 # uses these to clone from Gitea instead of actions/checkout.
 #
-# Gitea secret names must be uppercase alphanumeric plus underscore. These
-# are the names .gitea/workflows/build.yml expects — keep them in sync.
+# Gitea secret names must be uppercase alphanumeric plus underscore, and
+# the GITEA_ prefix is RESERVED (same as GITHUB_ on github). Naming these
+# GITEA_TOKEN / GITEA_USERNAME got them silently rejected. Hence LAB_*.
+# These names are what .gitea/workflows/build.yml expects — keep in sync.
 
 step "Actions secrets"
-for pair in "GITEA_TOKEN:${GITEA_TOKEN}" "GITEA_USERNAME:${GITEA_ADMIN_USER}"; do
+for pair in "LAB_GIT_TOKEN:${GITEA_TOKEN}" "LAB_GIT_USERNAME:${GITEA_ADMIN_USER}"; do
   name="${pair%%:*}"
   value="${pair#*:}"
   if curl -fsS -o /dev/null -X PUT \
@@ -117,6 +119,13 @@ for pair in "GITEA_TOKEN:${GITEA_TOKEN}" "GITEA_USERNAME:${GITEA_ADMIN_USER}"; d
     info "WARNING: couldn't set ${name} — Actions workflows will fail to clone"
   fi
 done
+
+# Registry namespace: images push under the admin user (admin/octopus-iac-lab)
+# rather than a dedicated org matching the GHCR path. An earlier version
+# created a `creid-octopus` org so package_id could be identical on both
+# registries; dropped as unnecessary complexity. The consequence is that
+# .octopus/deployment_process.ocl's package_id differs per backend, which
+# set-git-backend.sh handles alongside the other rewrites.
 
 # --- 4. repository ----------------------------------------------------------
 

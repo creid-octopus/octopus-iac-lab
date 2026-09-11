@@ -21,6 +21,24 @@ variable "github_username" {
   default     = "creid-octopus"
 }
 
+variable "container_registry_url" {
+  type        = string
+  description = <<-EOT
+    Registry the GHCR feed points at. Defaults to ghcr.io; offline mode
+    overrides it to the local Gitea registry via git-backend.auto.tfvars.
+
+    Must be an address reachable from BOTH the Octopus Server and the
+    Kubernetes nodes, because Octopus queries it for package versions and
+    kubelet pulls the image from it. That rules out `gitea:3000` (invisible
+    to the cluster) and `localhost:3000` (invisible to both), leaving
+    host.docker.internal — same constraint as the git URLs.
+
+    Credentials come from github_username/github_pat, which the Makefile
+    already swaps to the Gitea admin + token when GITEA_ENABLED=true.
+  EOT
+  default     = "https://ghcr.io"
+}
+
 variable "cac_repo_url" {
   type        = string
   description = "HTTPS URL of the Git repo Octopus pulls/pushes CaC from."

@@ -126,13 +126,37 @@ flip_files() {
   info "rewrote ${changed} file(s)"
 }
 
+# The Octopus feed resolves packages by id, and the two registries namespace
+# differently: ghcr.io/creid-octopus/... vs the Gitea admin's own namespace.
+# An earlier design created a Gitea org named creid-octopus so the ids would
+# match exactly and this rewrite wouldn't be needed; dropped as unnecessary
+# complexity (org creation needs a token scope we weren't requesting).
+#
+# So package_id becomes part of the switch. Must stay in step with
+# REGISTRY_PATH in .gitea/workflows/build.yml.
+GH_PKG="creid-octopus/octopus-iac-lab"
+GT_PKG="${GITEA_USER}/${GITEA_REPO}"
+
+flip_package_id() {
+  local from="$1" to="$2" changed=0 f
+  while IFS= read -r f; do
+    sed_inplace "s|package_id = \"${from}\"|package_id = \"${to}\"|g" "$f"
+    info "  $f"
+    changed=$((changed + 1))
+  done < <(grep -rlF "package_id = \"${from}\"" --include="*.ocl" .octopus 2>/dev/null | sort -u)
+  info "rewrote package_id in ${changed} file(s)"
+}
+
 case "${BACKEND}" in
   gitea)
     step "Overriding the github-defaulted vars"
     clear_overrides
     # Only these two need overriding — gitops_repo_url already defaults to
     # Gitea, so no override for tofu/argocd.
-    write_override tofu/control-plane    "cac_repo_url = \"${GT_GIT}\""
+    # control-plane carries the container registry too: same feed, different
+    # URI, so the OCL's `feed = "ghcr"` and package_id keep working.
+    write_override tofu/control-plane    "cac_repo_url          = \"${GT_GIT}\"
+container_registry_url = \"http://host.docker.internal:3000\""
     write_override tofu/app-randomquotes "cac_repo_url = \"${GT_GIT}\""
     write_override tofu/platform-hub     "ph_repo_url  = \"${GT_WEB}\""
 
@@ -140,6 +164,9 @@ case "${BACKEND}" in
     # Normally a no-op: Gitea URLs are the committed default under gitops/.
     # Only does work if a previous `gitea-disable` left github URLs behind.
     flip_files "${GH_CLONE}" "${GT_CLONE}" "${GH_GIT}" "${GT_GIT}" "${GH_WEB}" "${GT_WEB}"
+
+    step "Pointing OCL package_id at the Gitea registry namespace"
+    flip_package_id "${GH_PKG}" "${GT_PKG}"
 
     step "Recording the switch in .env"
     if grep -q '^GITEA_ENABLED=' .env 2>/dev/null; then
@@ -175,6 +202,9 @@ EOF
     # so running the lab without Gitea means uncommitted github URLs. That
     # asymmetry is intentional: Gitea is the normal case.
     flip_files "${GT_CLONE}" "${GH_CLONE}" "${GT_GIT}" "${GH_GIT}" "${GT_WEB}" "${GH_WEB}"
+
+    step "Pointing OCL package_id back at GHCR"
+    flip_package_id "${GT_PKG}" "${GH_PKG}"
 
     step "Recording the switch in .env"
     if grep -q '^GITEA_ENABLED=' .env 2>/dev/null; then
