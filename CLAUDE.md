@@ -28,8 +28,20 @@ make ensure-api-key                 # probe current key; if 401, auto-mint local
 #   app    = tofu/app-randomquotes/  (the CaC project)
 #   agent  = tofu/k8s-agent/         (K8s agent + shared cluster infra)
 #   argo   = tofu/argocd/            (ArgoCD install + Octopus↔Argo Gateway control plane)
-#   snow   = tofu/servicenow/        (ServiceNow ITSM connection + extension settings)
-make {space,cp,ph,app,agent,argo,snow}-{init,plan,apply,destroy,fmt,validate}
+#   snow   = tofu/servicenow/        (ONLY on demo/servicenow-cr-gate — absent on main)
+make {space,cp,ph,app,agent,argo}-{init,plan,apply,destroy,fmt,validate}
+
+# Rescue target: adopt demo-branch projects that exist in Octopus but not in
+# tofu state. Works around a provider bug (see "Known provider bugs").
+make app-import-demos
+
+# Local Gitea — offline git + registry + Actions. Opt-in, see docs/local-gitea.md
+make gitea-up | gitea-bootstrap | gitea-push | gitea-logs | gitea-down | gitea-nuke
+make gitea-enable | gitea-disable      # point the lab at gitea / back at github
+make gitea-mirror [REFS="main demo/x"] # reconcile gitea FROM github (needs network)
+make runner-image | runner-up | runner-logs | runner-down | runner-nuke
+
+make open                              # open Octopus + Argo CD + Gitea in a browser
 
 # Convenience
 make fmt validate                   # all stacks
@@ -37,7 +49,11 @@ make apply                          # ensure-api-key → space → cp → ph →
 make destroy                        # ensure-api-key → reverse order
 ```
 
-First-time bootstrap (local): fill `.env` with `OCTOPUS_URL`, `GITHUB_PAT`, and optionally `OCTOPUS_SERVER_BASE64_LICENSE` → `make master-key` → `make up` → `make apply`. `apply`/`destroy` depend on `ensure-api-key`, which auto-mints a fresh `OCTOPUS_API_KEY` when the existing one fails (e.g. after `make nuke` rebuilds the DB). The license auto-applies from `OCTOPUS_SERVER_BASE64_LICENSE` on first boot, or paste `compose/license.xml` via the UI. SaaS bootstrap still requires minting the API key in the UI — there's no admin/password to script against.
+First-time bootstrap (local): fill `.env` with `OCTOPUS_URL`, `GITHUB_PAT`, and optionally `OCTOPUS_SERVER_BASE64_LICENSE` → `make master-key` → `make up` → **`make space-init cp-init ph-init app-init agent-init argo-init`** → `make apply`.
+
+**The init step is not optional on a fresh checkout.** `make apply` does not run `tofu init`, so without it the first apply dies on "Inconsistent dependency lock file". `make bootstrap` does both, but passes `-auto-approve`.
+
+On a genuinely fresh Space, two more things bite in order, both documented under "Known provider bugs" below: the `Space Managers` team import needs a two-step apply, and `app-randomquotes` needs its channels created before the project's CaC can validate. `apply`/`destroy` depend on `ensure-api-key`, which auto-mints a fresh `OCTOPUS_API_KEY` when the existing one fails (e.g. after `make nuke` rebuilds the DB). The license auto-applies from `OCTOPUS_SERVER_BASE64_LICENSE` on first boot, or paste `compose/license.xml` via the UI. SaaS bootstrap still requires minting the API key in the UI — there's no admin/password to script against.
 
 ## Architecture
 
@@ -80,11 +96,30 @@ OCL is identical across instances (same git tree); the only switch is `local.sou
 
 OCL pool references use slugs (e.g. `Project.WorkerPool = "prod-pool"`); naming the pool identically on both instances is what makes the same OCL resolve on both. Don't hardcode `default-worker-pool` in OCL — SaaS doesn't have a pool with that slug. Either omit (let Octopus pick the instance default) or scope per-env to a slug that exists on both.
 
+### Offline / local-Gitea mode
+
+The lab can run with no internet at all: a local Gitea container provides git, the container registry, and CI (Gitea Actions), and Octopus + Argo CD read from it. `make gitea-enable` / `gitea-disable` switches backends, `make gitea-mirror` reconciles Gitea from GitHub.
+
+One rule explains most of the design: **content in git is identical in both modes; being offline is purely environmental configuration.** The committed defaults are deliberately split rather than all on one side:
+
+| What | Committed default | Why |
+|---|---|---|
+| `gitops/**` `repoURL`, `gitops_repo_url` | local Gitea | Read *only* by the Argo CD in this cluster. Octopus Cloud never reads `gitops/`; even the `saas`-labelled Applications live in this same cluster. |
+| `cac_repo_url`, `ph_repo_url`, `container_registry_url` | github.com / ghcr.io | Octopus Cloud reads CaC and the feed directly, and cannot reach `host.docker.internal`. |
+
+So `gitea-enable` rewrites **zero** files and just generates tfvars overrides, while `gitea-disable` rewrites 12 `gitops/` files. Gitea is the normal case; that asymmetry is intentional.
+
+**Use `host.docker.internal` for anything more than one consumer reads.** `gitea:3000` is invisible to the cluster and `localhost:3000` is wrong from both the cluster and the Octopus container. Same constraint the K8s agent already lives with at `host.docker.internal:8090`.
+
+See [`docs/local-gitea.md`](docs/local-gitea.md) for setup, verification steps, and the addressing table.
+
 ### Secrets vs config split
 
 - `.env` (gitignored): `MASTER_KEY`, `OCTOPUS_URL`, `OCTOPUS_API_KEY`, `GITHUB_PAT`. Optionally `OCTOPUS_SERVER_BASE64_LICENSE`, `OCTOPUS_PLATFORM_HUB_ENABLED`, `OCTOPUS_URL_FROM_CLUSTER`, `OCTOPUS_POLLING_URL_FROM_CLUSTER`, `SERVICENOW_USERNAME` + `SERVICENOW_PASSWORD` (basic-auth creds for the ServiceNow PDI used by the `demo/servicenow-cr-gate` demo — paired with an Octopus ITSM connection that holds the instance URL).
-- `tofu/<stack>/defaults.auto.tfvars` (committed): non-sensitive lab values (space name, CaC repo URL/branch/base path, agent name, chart version, etc.).
-- The Makefile is the only thing that bridges `.env` → `TF_VAR_*`. Don't add `terraform.tfvars` files for these.
+- `.env` also carries the offline-mode switches: `GITEA_ENABLED`, `GITEA_TOKEN` (written by `make gitea-bootstrap`, don't set by hand), and optionally `GITEA_ADMIN_USER` / `GITEA_ADMIN_PASSWORD` / `GITEA_REPO`. When `GITEA_ENABLED=true` the Makefile swaps `TF_VAR_github_username` / `TF_VAR_github_pat` to the Gitea admin and token, which repoints the git credential, the `Git.CloneUrl` library variable, and the container registry feed in one move.
+- `tofu/<stack>/defaults.auto.tfvars` (committed): non-sensitive lab values (space name, CaC repo URL/branch/base path, agent name, chart version, which demo branches to build, etc.).
+- `tofu/<stack>/git-backend.auto.tfvars` (generated, gitignored): written by `make gitea-enable`/`gitea-disable` to override whichever repo/registry vars aren't already defaulted to the right backend. See the precedence trap below for why this is a file and not an env var.
+- The Makefile is the only thing that bridges `.env` → `TF_VAR_*`. Don't add `terraform.tfvars` files for these, and don't expect a `TF_VAR_*` export to beat a committed `*.auto.tfvars` — it won't.
 
 ### Auth model (lab-only choices)
 
@@ -100,7 +135,10 @@ OCL pool references use slugs (e.g. `Project.WorkerPool = "prod-pool"`); naming 
 
 ### Image + CI
 
-- App image is **built from this repo** by `.github/workflows/build.yml` and pushed to `ghcr.io/creid-octopus/octopus-iac-lab`. The control-plane stack registers GHCR as an external feed; the deployment process pulls the image from there.
+- App image is **built from this repo** by `.github/workflows/build.yml` and pushed to `ghcr.io/creid-octopus/octopus-iac-lab`. The control-plane stack registers the registry as an external feed; the deployment process pulls the image from there.
+- **There is a second, fully offline CI path**: `.gitea/workflows/build.yml` on a local Gitea Actions runner, building and pushing to Gitea's own registry. Same feed, same `package_id` shape, and the Octopus feed trigger fires against it identically — so the CI-to-release-to-deploy story demos the same online or off. The feed's `feed_uri` is `var.container_registry_url` for exactly this reason. Full detail in [`docs/local-gitea.md`](docs/local-gitea.md).
+- **Gitea reserves the `GITEA_` prefix for Actions secret names** and rejects them silently, which is why the workflow uses `LAB_GIT_TOKEN` / `LAB_GIT_USERNAME`.
+- **Gitea's registry advertises its token endpoint from `ROOT_URL`.** Set that to `localhost` and containerd on a cluster node follows the auth challenge to `localhost:3000` — itself — and image pulls fail with `connection refused` while looking like a TLS problem. `ROOT_URL` is `host.docker.internal:3000`, which requires `127.0.0.1 host.docker.internal` in the Mac's `/etc/hosts` so browser links still work.
 - `.github/workflows/release.yml` is a reusable workflow called by `build.yml` once per Octopus target via a job matrix (SaaS + Local). It creates a release on the chosen Octopus and deploys it tenanted via `OctopusDeploy/deploy-release-tenanted-action@v3` (the non-tenanted action doesn't support tenants).
 - `build.yml` also pushes **Octopus Build Information** to both Octopus targets after the image push (`OctopusDeploy/push-build-information-action@v4`), so the release page shows commits + a deep link back to the GHA run.
 - Local Octopus is reachable from GHA via Tailscale Funnel; if the funnel is down the local matrix leg cleanly skips with `continue-on-error: true`.
@@ -129,14 +167,59 @@ Two parallel deployment shapes drive the same `randomquotes` Octopus project:
 
 The `OctopusDeploy/octopusdeploy` provider has zero Argo CD resources as of v1.12 — `tofu/modules/octopus-argocd-gateway/` placeholders the schema we'd hope they'll ship for the Gateway connection, so the eventual migration is "swap the implementation, keep the call sites".
 
+### The tfvars precedence trap
+
+**`*.auto.tfvars` outranks `TF_VAR_*` environment variables in OpenTofu's precedence order.** Anything set in a committed `defaults.auto.tfvars` cannot be overridden from `.env` via the Makefile, and the override fails *silently*.
+
+This cost two separate afternoons in one week:
+
+- A `DEMO_BRANCHES` env-var mechanism was added to the Makefile while `demo_branches` was already set in `tofu/app-randomquotes/defaults.auto.tfvars`. The export did nothing and the lab kept building all seven demo projects. Now removed; that tfvars file is the only switch.
+- The Gitea backend switch needed to override `cac_repo_url` / `ph_repo_url`, which are also in `defaults.auto.tfvars`. Solved by generating a **`git-backend.auto.tfvars`** per stack instead of exporting env vars.
+
+If you need to override something that lives in a committed tfvars, generate a second `*.auto.tfvars` whose **filename sorts after** the one you're overriding (later files win). `git-backend` beats `defaults` because `g > d`. An earlier attempt named `backend.auto.tfvars` was silently a no-op because `b < d`. Don't rename it to anything alphabetically earlier.
+
+### Known provider bugs and bootstrap chicken-and-eggs
+
+All of these are first-run problems on a fresh Space or cluster. None are your config.
+
+- **`Missing Resource State After Create` on `octopusdeploy_project`.** The project is created server-side but the provider returns no state, so the next apply fails with "a project with this name already exists". Non-deterministic, usually one project per apply. Fix: `make app-import-demos` (adopts what's really there, skips what's tracked, safe to re-run), then re-apply. Expect to alternate a few times.
+- **`space_managers_membership.tf` can't resolve its import on a fresh Space.** The import id depends on `octopusdeploy_space.this.id`, which doesn't exist until the same apply creates it, and import blocks need plan-time-known ids. Two-step: `make space-apply TOFU_APPLY_FLAGS="-target=octopusdeploy_space.this"`, then a plain `make space-apply`. If the provider then duplicates the scoped role (two identical `ScopedUserRoles` on the team), delete the extra via `DELETE /api/{space}/scopeduserroles/{id}` and re-apply.
+- **Channels are circular with CaC on a fresh Space.** `deployment_process.ocl` references the `stable` / `ephemeral-previews` channel slugs from the moment the project exists, but those channels are separate resources that depend on the project, and the project's deployment-settings update re-validates against existing channels on *every* touch. Not just on create. Worked around by creating both channels directly via `POST /api/{space}/channels` and importing them. Unfixed structurally; the clean break would be creating the project with `is_version_controlled = false`, then channels, then flipping CaC on.
+- **`OCTOPUS_SPACE_IS_DEFAULT` must be `false` on a fresh self-hosted instance.** Octopus allows one default Space server-wide and won't auto-demote the built-in `Default`, so creating `IaC Sandbox` as default is rejected outright.
+- **`kubernetes_manifest` cannot create a CRD-backed resource in the same apply that installs the CRD.** It validates the manifest's kind against live API discovery at plan time, so `depends_on` doesn't help. `tofu/argocd`'s bootstrap Application and AppProjects are `null_resource` + `kubectl apply` for this reason. Don't "improve" them back.
+- **`null_resource` only re-runs when its `triggers` change**, not when the `local-exec` command text changes. Editing a helm `--set` flag inside one is a silent no-op. `tofu/k8s-agent/nginx_ingress.tf` hashes its rendered command into `triggers` to avoid this; copy that pattern.
+
 ## Editing rules of thumb
 
 - **Don't redefine deployment process / variables / channels / runbooks in HCL.** They are owned by `.octopus/*.ocl`. Either edit OCL by hand and commit, or edit in the Octopus UI and let it commit.
 - **Don't pre-populate `.octopus/`.** Let Octopus seed each file on first save so the schema matches the running server.
 - **`MASTER_KEY` is generated once.** Changing it after first boot makes existing encrypted data unreadable.
-- The `octopusdeploy` provider is `OctopusDeploy/octopusdeploy ~> 1.12` (the official one, not the older `OctopusDeployLabs/` fork). The k8s-agent stack additionally uses `helm` and `kubernetes` providers and requires Docker Desktop Kubernetes enabled.
+- The `octopusdeploy` provider is `OctopusDeploy/octopusdeploy ~> 1.12` (the official one, not the older `OctopusDeployLabs/` fork). **That constraint resolves forward**, currently to 1.19.3, which is not a no-op: `octopusdeploy_lifecycle` replaced the `release_retention_policy` / `tentacle_retention_policy` blocks with `release_retention_with_strategy` / `tentacle_retention_with_strategy` (`strategy = "Count"` plus `quantity_to_keep`/`unit`). The old blocks only work against Octopus Server older than 2025.3 and need an opt-in env var. Expect more of this on a fresh `tofu init`.
+- **Docker Desktop's Kubernetes is now its kind-based multi-node provisioner**, not the old single-node `docker-desktop` cluster. Consequences worth knowing:
+  - Nodes are docker containers named `desktop-control-plane` and `desktop-worker`. `kube_context` is still `docker-desktop`.
+  - **The cluster does not share Docker's image store.** A locally built image is invisible to pods until it's imported into containerd on *each* node (`docker save | docker exec <node> ctr -n k8s.io images import -`). The `k8s.io` namespace matters; kubelet doesn't see the default one. Deliberately not `kind load`: the CLI may not be installed and the containers aren't necessarily labelled the way `kind get clusters` expects.
+  - **containerd matches images by exact reference.** Importing `foo/bar:1` does not satisfy a pod asking for `registry:3000/foo/bar:1`, even for identical bytes. Tag with the reference the pod will request *before* saving.
+  - `LoadBalancer` services get a docker-bridge EXTERNAL-IP (e.g. `172.18.0.2`), not `localhost`, and it isn't reachable from the host. The `kubectl port-forward` in the Ingress section is genuinely required, not a workaround to improve on.
+- **Cluster resource ceiling is real.** The full stack plus an unbounded Argo fan-out once hit `0/2 nodes are available: 1 Too many pods`, which surfaced as unrelated-looking failures (a stuck `ingress-nginx-admission-create` job). Docker Desktop's default CPU/RAM allocation also isn't enough; 8 CPUs / 24GB is comfortable. If something fails inexplicably, check pod count before debugging the thing that failed.
 - `gitops/charts/randomquotes/` is the source-of-truth Helm chart for the **GitOps path** (every leaf Application instantiates the chart with per-tenant values). Plain manifests in `app/` are not used by Argo. The K8s agent path is independent — its inlined OCL manifests live in `.octopus/deployment_process.ocl` and substitute Octopus variables at deploy time. Argo's path uses Helm values for the same per-tenant variation. Both paths target distinct namespaces (`argo-randomquotes-…` vs `randomquotes-…`) so they coexist on the same cluster.
-- **Demo branches are 1 surgical commit on main.** Each open PR branch (`demo/*`, `feat/*`, `infra/ha`) carries only the files that demonstrate that feature: its own `.octopus-<demo>/` OCL, chart template overrides (`rollout.yaml`, `sealed-secret.yaml`), or stack additions (`tofu/platform-hub/policies/`, `tofu/servicenow/`). No drift on shared files (`Makefile`, `tofu/k8s-agent/`, `tofu/argocd/`, etc.). When main moves, rebase the branches (force-push-with-lease is authorised on them); don't push doc/infra updates to demo branches, push to main and let the next rebase carry them.
+- **Demo branches are 1 surgical commit on main.** Each open PR branch (`demo/*`, `feat/*`, `infra/ha`) carries only the files that demonstrate that feature: its own `.octopus-<demo>/` OCL, chart template overrides (`rollout.yaml`, `sealed-secret.yaml`), or stack additions (`tofu/platform-hub/policies/`, `tofu/servicenow/`). No drift on shared files (`Makefile`, `tofu/k8s-agent/`, `tofu/argocd/`, etc.); don't push doc/infra updates to demo branches, push to main.
+- **When main moves, REBUILD the demo branch from main. Don't rebase it.** Rebase is the wrong tool here: the branches drift ~50-70 files behind, of which only a handful are actual demo content, so a rebase is mostly conflict resolution over changes you don't want. Rebuilding takes five commands and cannot conflict (force-push-with-lease is authorised on these branches):
+  ```bash
+  git switch -C demo/<slug> main                       # reset the branch onto main
+  git checkout origin/demo/<slug> -- .octopus-<slug> <any stack dirs it adds>
+  # apply the stale-ref fixes below, then:
+  git add .octopus-<slug> <stack dirs>
+  git commit -m "Rebuild <slug> demo on current main"
+  git push --force-with-lease
+  ```
+  Note `git checkout <ref> -- <paths>` stages the ORIGINAL files, so any fix you apply afterwards must be `git add`ed again or you'll commit the stale versions.
+- **Every demo payload needs the same four stale-ref fixes on rebuild**, because the branches predate the fork rename and the Gitea work:
+  1. `package_id` in `.octopus-<slug>/deployment_process.ocl` → the current backend's namespace (`admin/octopus-iac-lab` offline, `creid-octopus/octopus-iac-lab` on GHCR).
+  2. `git clone` in `.octopus-<slug>/runbooks/maintenance-{on,off}.ocl` → `#{Git.CloneUrl}`, never a hardcoded host.
+  3. Registry allow-lists in any Rego policy (`tofu/platform-hub/policies/image_registry.rego` allow-lists both registries — a GHCR-only list makes the OPA demo reject the lab's own offline images, failing on its own rule).
+  4. Cosmetic `ghcr.io/vlussenburg/...` echo lines in runbooks. Don't substitute `#{Octopus.Action.Package[...]}` here: runbooks have no package reference, so it won't resolve.
+- **Demo branch status.** `demo/platform-hub-opa` and `demo/process-template` are rebuilt on current main and apply cleanly. The other five (`blue-green`, `bg-preview`, `canary`, `servicenow-cr-gate`, `smoke-step-template`) are parked: their OCL references `stable`/`ephemeral-previews` channels that hit the channel bootstrap problem below, and `smoke-step-template` also references an `ActionTemplates-1` that doesn't exist in a fresh Space.
+- **Which demo projects get built is set in `tofu/app-randomquotes/defaults.auto.tfvars`**, by commenting entries in or out of `demo_branches`. There is deliberately no env-var override — see the precedence trap below.
 - **Demo OCL is `git mv` of `.octopus/`, not a copy.** The demo project's CaC payload is the *only* `.octopus-*/` on the branch — `git mv .octopus/<project files> .octopus-<slug>/` so the diff against main shows renames + the targeted edit (in this lab's case, one extra step). Keep `.octopus/process-templates/<slug>.ocl` in place (it's a Platform Hub artifact, cross-space, not a project base_path — its consumer is PH not a tofu-managed project). Copy-then-modify breaks rebase auto-resolve: when main updates `.octopus/deployment_process.ocl`, the demo branch's stale duplicate at `.octopus/...` conflicts. A clean rename has no conflict because `.octopus/...` isn't on the branch at all. The canonical `randomquotes` project is unaffected — its CaC settings track `refs/heads/main`'s `.octopus/`, and demo branches never modify that ref.
 - **Process templates live in Platform Hub and use a different OCL schema than step templates** (`.octopus/process-templates/<slug>.ocl`). Gotchas burned in: (1) `default_value` is **not** on `ProcessTemplateParameter` — leaving the field out is fine, set defaults via the UI; (2) deferred packages must bind to a `Package`-typed parameter (`display_settings = { Octopus.ControlType = "Package" }`) via *three* things together — the `parameter` exists, the `packages "<Name>" { }` block name matches the parameter name, **and** `properties.PackageParameterName = "<Name>"` is set on the package block; matching block name alone is not enough (Octopus rejects with `Please select a package parameter for the package`). YAML references the package by parameter name: `#{Octopus.Action.Package[AppImage].Image}`; `feed` and `package_id` stay blank — the consuming project supplies them at instantiation. Cross-check by hitting `/api/communityactiontemplates` to see how working step templates serialize the binding. (3) `Octopus.Action.KubernetesContainers.AutoCreateNamespace = "True"` is accepted at the OCL layer on `KubernetesDeployRawYaml` even though the UI doesn't expose a toggle for that step type; (4) Platform Hub has no feeds endpoint — `/api/platformhub/feeds` is 404 — so the consuming Space's feeds resolve at instantiation time (every Space using a template needs a feed with the same slug, OR the template uses a Package-typed parameter so the project picks the feed).
 - **REST endpoint to verify a process template parses without round-tripping the UI** (not advertised in the API root's Links list — found by watching `docker compose logs octopus` while the UI loads a template): `GET /api/platformhub/refs%2Fheads%2F{branch}/processtemplates/summaries` lists templates with a `HasError` flag, and `GET /api/platformhub/refs%2Fheads%2F{branch}/processtemplates/{slug}` returns the parsed template or HTTP 400 with the OCL error message body. Use this to gate template edits before merging.
