@@ -1,0 +1,30 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sreplicaspertier
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sReplicasPerTier
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sreplicaspertier
+
+        tier_cap := {"free": 1, "pro": 2, "enterprise": 3}
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          tier := input.review.object.metadata.labels["tenant.octopus.com/tier"]
+          cap := tier_cap[tier]
+          input.review.object.spec.replicas > cap
+          msg := sprintf("tier=%v allows max %v replicas, got %v", [tier, cap, input.review.object.spec.replicas])
+        }
+
+        violation[{"msg": msg}] {
+          input.review.object.kind == "Deployment"
+          tier := input.review.object.metadata.labels["tenant.octopus.com/tier"]
+          not tier_cap[tier]
+          msg := sprintf("tier=%q is not one of: free, pro, enterprise", [tier])
+        }

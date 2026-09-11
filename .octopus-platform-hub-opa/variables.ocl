@@ -1,0 +1,21 @@
+variable "Replicas" {
+    value "1" {
+        prompt {
+            description = "Pod replicas requested for this deployment. The cluster's Platform Hub policy caps this per tenant tier (free=1, pro=2, enterprise=3); a request above the cap is rejected at admission and surfaced as a failed task here in Octopus."
+            label = "Replica count"
+        }
+    }
+}
+
+variable "Tier" {
+    value "free" {
+        tenant_tag = ["tier/free"]
+    }
+    value "pro" {
+        tenant_tag = ["tier/pro"]
+    }
+    value "enterprise" {
+        tenant_tag = ["tier/enterprise"]
+    }
+    value "free" {}
+}

@@ -1,0 +1,98 @@
+name = "Maintenance Mode On"
+description = "Show a maintenance overlay on the chosen tenant's app and scale the deployment to 1 replica. The message comes from the prompted Maintenance.Message variable."
+default_guided_failure_mode = "EnvironmentDefault"
+multi_tenancy_mode = "Tenanted"
+
+connectivity_policy {
+    allow_deployments_to_no_targets = false
+}
+
+run_retention_policy {
+    quantity_to_keep = 5
+    type = "Count"
+}
+
+process {
+    step "patch-config" {
+        name = "Patch ConfigMap (maintenance message on)"
+        properties = {
+            Octopus.Action.TargetRoles = "k8s"
+        }
+
+        action {
+            action_type = "Octopus.KubernetesDeployConfigMap"
+            properties = {
+                Octopus.Action.Kubernetes.ResourceStatusCheck = "True"
+                Octopus.Action.KubernetesContainers.ConfigMapName = "randomquotes-config"
+                Octopus.Action.KubernetesContainers.ConfigMapValues = "{\"config.json\":\"{\\\"tenant\\\":\\\"#{Octopus.Deployment.Tenant.Name}\\\",\\\"mood\\\":\\\"#{Featured.Mood}\\\",\\\"icon\\\":\\\"#{Brand.Icon}\\\",\\\"color\\\":\\\"#{Brand.Color}\\\",\\\"watermark\\\":\\\"#{Branding.Watermark}\\\",\\\"maintenance\\\":\\\"#{Maintenance.Message}\\\"}\"}"
+                Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
+            }
+        }
+    }
+
+    step "scale-down" {
+        name = "Scale to 1 replica"
+        properties = {
+            Octopus.Action.TargetRoles = "k8s"
+        }
+
+        action {
+            action_type = "Octopus.KubernetesRunScript"
+            properties = {
+                Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
+                Octopus.Action.RunOnServer = "false"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                        set -euo pipefail
+                        kubectl scale deployment/randomquotes --replicas=1
+                        kubectl rollout restart deployment/randomquotes
+                        kubectl rollout status deployment/randomquotes --timeout=2m
+                    EOT
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+            }
+        }
+    }
+
+    step "set-argo-maintenance" {
+        name = "Set Argo Maintenance"
+
+        action {
+            action_type = "Octopus.Script"
+            worker_pool_variable = "Runbook.LinuxWorker"
+            properties = {
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    set -euo pipefail
+                    LEAF="gitops/applications/randomquotes/#{Source}/#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}.yaml"
+                    MSG=$(printf '%s' "#{Maintenance.Message}" | sed -e 's/[\\&|]/\\&/g')
+
+                    WORK=$(mktemp -d)
+                    git clone "#{Git.CloneUrl}" "$WORK"
+                    cd "$WORK"
+                    git config user.email "octopus@octopus.com"
+                    git config user.name  "Octopus"
+
+                    sed -i "s|^\(\s*maintenance: \).*|\1\"$MSG\"|" "$LEAF"
+                    git diff --quiet -- "$LEAF" && { echo "no change"; exit 0; }
+                    git add "$LEAF"
+                    git commit -m "Set maintenance for #{Octopus.Deployment.Tenant.Name}/#{Octopus.Environment.Name | ToLower}: $MSG"
+
+                    # Tenanted runbook fans out across matching tenants in
+                    # parallel. Each script edits a different leaf but they
+                    # all push to main — git's branch lock makes the first
+                    # one win and rejects the rest. Retry with rebase.
+                    for i in 1 2 3 4 5 6 7 8 9 10; do
+                      if git push origin HEAD:main 2>&1; then
+                        exit 0
+                      fi
+                      echo "push rejected, rebase + retry ($i/10)"
+                      git pull --rebase origin main
+                    done
+                    echo "push failed after 10 retries" >&2
+                    exit 1
+                EOT
+            }
+        }
+    }
+}

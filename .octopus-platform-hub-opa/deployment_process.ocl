@@ -1,0 +1,91 @@
+step "deploy-manifests" {
+    name = "Deploy Manifests"
+    properties = {
+        Octopus.Action.TargetRoles = "k8s"
+    }
+
+    action {
+        action_type = "Octopus.KubernetesDeployRawYaml"
+        properties = {
+            Octopus.Action.Kubernetes.ResourceStatusCheck = "True"
+            Octopus.Action.KubernetesContainers.AutoCreateNamespace = "True"
+            Octopus.Action.KubernetesContainers.CustomResourceYaml = <<-EOT
+                apiVersion: apps/v1
+                kind: Deployment
+                metadata:
+                  name: randomquotes
+                  labels:
+                    app: randomquotes
+                    app.kubernetes.io/name: randomquotes
+                    app.kubernetes.io/instance: randomquotes-#{Octopus.Deployment.Tenant.Name}
+                    app.kubernetes.io/part-of: randomquotes
+                    tenant.octopus.com/tier: "#{Tier}"
+                spec:
+                  replicas: #{Replicas}
+                  selector:
+                    matchLabels:
+                      app: randomquotes
+                  template:
+                    metadata:
+                      labels:
+                        app: randomquotes
+                        app.kubernetes.io/name: randomquotes
+                        app.kubernetes.io/instance: randomquotes-#{Octopus.Deployment.Tenant.Name}
+                        app.kubernetes.io/part-of: randomquotes
+                        tenant.octopus.com/tier: "#{Tier}"
+                    spec:
+                      containers:
+                        - name: randomquotes
+                          image: #{Octopus.Action.Package[randomquotes-image].Image}
+                          ports:
+                            - containerPort: 80
+                          resources:
+                            requests:
+                              cpu: "100m"
+                              memory: "64Mi"
+                            limits:
+                              cpu: "250m"
+                              memory: "128Mi"
+                                EOT
+            Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
+            Octopus.Action.RunOnServer = "false"
+            Octopus.Action.Script.ScriptSource = "Inline"
+        }
+
+        packages "randomquotes-image" {
+            acquisition_location = "NotAcquired"
+            feed = "ghcr"
+            package_id = "admin/octopus-iac-lab"
+            properties = {
+                Extract = "False"
+                Purpose = "DockerImageReference"
+                SelectionMode = "immediate"
+            }
+        }
+    }
+}
+
+step "capture-deployment-artifacts" {
+    name = "Capture deployment artifacts"
+    properties = {
+        Octopus.Action.TargetRoles = "k8s"
+    }
+
+    action {
+        action_type = "Octopus.KubernetesRunScript"
+        worker_pool_variable = "Project.WorkerPool"
+        properties = {
+            Octopus.Action.KubernetesContainers.Namespace = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
+            Octopus.Action.RunOnServer = "false"
+            Octopus.Action.Script.ScriptSource = "Inline"
+            Octopus.Action.Script.Syntax = "Bash"
+            Octopus.Action.Script.ScriptBody = <<-EOT
+                set -euo pipefail
+                kubectl describe deployment randomquotes > randomquotes-describe.txt
+                new_octopusartifact randomquotes-describe.txt "describe-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.txt"
+                kubectl get deployment,svc,ingress,configmap,pod -l app=randomquotes -o yaml > randomquotes-resources.yaml
+                new_octopusartifact randomquotes-resources.yaml "resources-#{Octopus.Environment.Name}-#{Octopus.Deployment.Tenant.Name}.yaml"
+                EOT
+        }
+    }
+}

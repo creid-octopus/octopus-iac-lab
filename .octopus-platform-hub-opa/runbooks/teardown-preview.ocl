@@ -1,0 +1,37 @@
+name = "Teardown preview"
+description = "Deprovisioning hook for native ephemeral preview environments. Removes the namespace created by `Spin up preview`. The namespace expression is byte-identical to spin-up's so the two can't drift. Untenanted — same scope as Spin up preview."
+default_guided_failure_mode = "EnvironmentDefault"
+multi_tenancy_mode = "Untenanted"
+
+connectivity_policy {
+    allow_deployments_to_no_targets = false
+}
+
+run_retention_policy {
+    quantity_to_keep = 20
+    type = "Count"
+}
+
+process {
+    step "delete-namespace" {
+        name = "Delete preview namespace"
+        properties = {
+            Octopus.Action.TargetRoles = "k8s"
+        }
+
+        action {
+            action_type = "Octopus.KubernetesRunScript"
+            properties = {
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    set -eu
+                    NS="randomquotes-#{Source}-#{Octopus.Environment.Name}"
+                    echo "Deleting namespace $NS …"
+                    kubectl delete namespace "$NS" --ignore-not-found --wait=true
+                    echo "$NS torn down."
+                EOT
+            }
+        }
+    }
+}
