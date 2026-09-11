@@ -150,7 +150,13 @@ gitea-push:
 		echo "Commit them first (e.g. git commit -am 'Point lab at local Gitea'), or re-run with FORCE=1."; \
 		[ -n "$$FORCE" ] || exit 1; \
 	fi
-	$(load_env) git push "http://$${GITEA_ADMIN_USER:-admin}:$${GITEA_TOKEN}@localhost:3000/$${GITEA_ADMIN_USER:-admin}/$${GITEA_REPO:-octopus-iac-lab}.git" HEAD:refs/heads/main
+	@# Push to the SAME branch name, not always main. An earlier version used
+	@# HEAD:refs/heads/main, so running this from a demo branch silently
+	@# overwrote Gitea's main with demo content — and since Platform Hub
+	@# commits policies to Gitea's main, that clobbered real state.
+	$(load_env) branch=$$(git rev-parse --abbrev-ref HEAD); \
+	echo "pushing $$branch -> gitea/$$branch"; \
+	git push "http://$${GITEA_ADMIN_USER:-admin}:$${GITEA_TOKEN}@localhost:3000/$${GITEA_ADMIN_USER:-admin}/$${GITEA_REPO:-octopus-iac-lab}.git" "HEAD:refs/heads/$$branch"
 
 # Reconcile Gitea from upstream (github) — the "pull relevant changes into
 # gitea" step. Reads UPSTREAM refs, not your working tree, so unfinished

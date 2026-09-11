@@ -61,6 +61,24 @@ for ref in "${REFS[@]}"; do
     info "SKIP ${ref} — no such branch on ${UPSTREAM}"
     continue
   fi
+
+  # Gitea is not a pure mirror any more: Platform Hub commits policies
+  # (.octopus/policies/*.ocl) straight into it, and those commits exist
+  # nowhere else. Force-pushing upstream over them destroys the only copy
+  # of a policy definition. So refuse when Gitea is ahead, rather than
+  # silently winning.
+  if git rev-parse --verify --quiet "refs/remotes/gitea/${ref}" >/dev/null; then
+    ahead="$(git rev-list --count "${src}..refs/remotes/gitea/${ref}" 2>/dev/null || echo 0)"
+    if [ "${ahead}" -gt 0 ]; then
+      info "REFUSING ${ref} — gitea is ${ahead} commit(s) ahead of ${UPSTREAM}:"
+      git log --oneline "${src}..refs/remotes/gitea/${ref}" 2>/dev/null | sed 's/^/        /'
+      info "  Those are probably Octopus's own commits (Platform Hub policies)."
+      info "  Reconcile first: cherry-pick or merge them into ${UPSTREAM}, then re-run."
+      info "  Override with MIRROR_FORCE=1 only if you're certain they're disposable."
+      [ -n "${MIRROR_FORCE:-}" ] || continue
+    fi
+  fi
+
   sha="$(git rev-parse --short "${src}")"
   # --force: Gitea is a mirror, so upstream always wins. Anything committed
   # straight into Gitea that isn't upstream is expected to be discarded —
