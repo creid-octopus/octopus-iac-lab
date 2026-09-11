@@ -6,8 +6,10 @@ secrets.auto.tfvars
 *.secrets.tfvars
 # Note: defaults.auto.tfvars and other non-sensitive *.auto.tfvars ARE
 # committed — they hold lab-wide config like the Octopus URL.
-# Exception: gitea.auto.tfvars is generated per-machine by
-# compose/set-git-backend.sh to point the lab at the local Gitea.
+# Exception: git-backend.auto.tfvars is generated per-machine by
+# compose/set-git-backend.sh to override whichever git-backend vars aren't
+# already on the right side by default.
+git-backend.auto.tfvars
 gitea.auto.tfvars
 
 # OpenTofu state — has secrets, machine-specific

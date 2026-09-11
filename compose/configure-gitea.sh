@@ -95,6 +95,29 @@ else
 fi
 info "written to .env as GITEA_TOKEN"
 
+# --- 3b. Actions secrets ----------------------------------------------------
+#
+# User-level, so every repo under this account sees them. The build workflow
+# uses these to clone from Gitea instead of actions/checkout.
+#
+# Gitea secret names must be uppercase alphanumeric plus underscore. These
+# are the names .gitea/workflows/build.yml expects — keep them in sync.
+
+step "Actions secrets"
+for pair in "GITEA_TOKEN:${GITEA_TOKEN}" "GITEA_USERNAME:${GITEA_ADMIN_USER}"; do
+  name="${pair%%:*}"
+  value="${pair#*:}"
+  if curl -fsS -o /dev/null -X PUT \
+       -H "Authorization: token ${GITEA_TOKEN}" \
+       -H "Content-Type: application/json" \
+       -d "{\"data\":\"${value}\"}" \
+       "${GITEA_URL}/api/v1/user/actions/secrets/${name}" 2>/dev/null; then
+    info "${name} set"
+  else
+    info "WARNING: couldn't set ${name} — Actions workflows will fail to clone"
+  fi
+done
+
 # --- 4. repository ----------------------------------------------------------
 
 step "Repository ${GITEA_ADMIN_USER}/${GITEA_REPO}"

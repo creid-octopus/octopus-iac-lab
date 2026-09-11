@@ -1,0 +1,71 @@
+# act_runner configuration, tuned for offline use.
+#
+# Differences from the instruqt tracks' config, all deliberate:
+#
+#   labels        point at a LOCALLY BUILT image (compose/runner-image/) instead
+#                 of docker.gitea.com/runner-images:ubuntu-latest. Theirs is
+#                 multi-GB and needs Docker Hub; this one is ~100MB and never
+#                 leaves the machine.
+#   force_pull    false. Theirs is true, which re-pulls the job image on every
+#                 single run — guaranteed failure with no network.
+#   network       the Octopus compose network, so job containers can resolve
+#                 `gitea` by name to clone the repo.
+#   github_mirror left empty but documented below — this is the knob for
+#                 running workflows that use `uses:` offline.
+
+log:
+  level: info
+
+runner:
+  file: .runner
+  capacity: 1
+  timeout: 1h
+  shutdown_timeout: 0s
+  # Gitea is HTTP-only here, so don't demand a valid TLS chain.
+  insecure: true
+  fetch_timeout: 5s
+  fetch_interval: 2s
+
+  # Where `uses:` references are resolved from. Empty means github.com, so
+  # any workflow with `uses: actions/checkout@v4` needs internet even though
+  # Gitea itself doesn't.
+  #
+  # The workflows in .gitea/workflows/ deliberately use only `run:` steps to
+  # avoid this entirely. If you'd rather use real actions offline, mirror the
+  # action repos into Gitea (e.g. as admin/checkout) and point this at it:
+  #   github_mirror: http://gitea:3000
+  github_mirror: ''
+
+  # label: docker://<image>   run each job in that container
+  # label: host               run jobs directly in the runner container
+  #
+  # Docker mode with a local image keeps proper job isolation and a clean
+  # workspace per run, without any registry dependency.
+  labels:
+    - "ubuntu-latest:docker://octopus-iac-lab/runner:local"
+
+cache:
+  # The cache server binds inside the runner and is only useful for
+  # actions/cache, which needs `uses:`. Off until that's wired up.
+  enabled: false
+
+container:
+  # Job containers join the Octopus stack's network so `gitea:3000` resolves.
+  # Without this they land on a per-job bridge and the clone step fails with
+  # "could not resolve host: gitea".
+  network: "selfhost-setup_default"
+  privileged: false
+  # Never reach out for the job image — it's built locally by `make runner-image`.
+  force_pull: false
+  force_rebuild: false
+  require_docker: false
+  valid_volumes:
+    # Lets a job mount the host docker socket, which is how the build step
+    # runs `docker build` and loads images into the kind nodes.
+    - /var/run/docker.sock
+
+host:
+  workdir_parent:
+
+metrics:
+  enabled: false

@@ -5,6 +5,9 @@ SHELL := /bin/bash
 COMPOSE := docker compose --env-file .env -f compose/docker-compose.yml
 # Separate compose project — see the header of compose/gitea.yaml for why.
 GITEA_COMPOSE := docker compose --env-file .env -f compose/gitea.yaml
+# Runner needs a registration token injected at up-time, so it is normally
+# driven via compose/configure-runner.sh rather than this directly.
+RUNNER_COMPOSE := docker compose --env-file .env -f compose/act-runner.yaml
 SPACE_DIR := tofu/space
 CP_DIR := tofu/control-plane
 PH_DIR := tofu/platform-hub
@@ -64,6 +67,7 @@ endef
         up down logs ps nuke \
         gitea-up gitea-down gitea-nuke gitea-logs gitea-bootstrap gitea-push \
         gitea-enable gitea-disable gitea-mirror open \
+        runner-image runner-up runner-logs runner-down runner-nuke \
         bootstrap master-key mint-api-key ensure-api-key \
         space-init space-plan space-apply space-destroy space-fmt space-validate \
         cp-init cp-plan cp-apply cp-destroy cp-fmt cp-validate \
@@ -80,6 +84,7 @@ help:
 	@echo "  git backend switch  : gitea-enable (point lab at gitea) | gitea-disable (back to github)"
 	@echo "  sync from upstream  : gitea-mirror [REFS=\"main demo/x\"]  (github -> gitea; needs network)"
 	@echo "  local dev push      : gitea-push  (your working commit -> gitea)"
+	@echo "gitea actions runner  : runner-image | runner-up | runner-logs | runner-down | runner-nuke"
 	@echo "open                  : open Octopus + Argo CD + Gitea in your browser (skips anything that's down)"
 	@echo "bootstrap             : bootstrap (fresh clone → running lab) | master-key | mint-api-key (local-only)"
 	@echo "deploys come from CI: push to main on github → .github/workflows/build.yml → release.yml"
@@ -170,6 +175,34 @@ gitea-disable:
 
 gitea-logs:
 	$(GITEA_COMPOSE) logs -f gitea
+
+# --- gitea actions runner -------------------------------------------------
+#
+# Registration tokens are single-use and short-lived, so runner-up fetches a
+# fresh one and recreates the container every time. That's also the fix if
+# the runner ever shows offline in Gitea.
+
+# Job container image. Built locally and never pulled — the runner config
+# sets force_pull:false, so this has to exist before any workflow runs.
+# Needs network once, for the docker:cli base layer.
+runner-image:
+	docker build -t octopus-iac-lab/runner:local compose/runner-image
+
+runner-up:
+	$(load_env) ./compose/configure-runner.sh
+
+runner-logs:
+	$(RUNNER_COMPOSE) logs -f runner
+
+runner-down:
+	$(RUNNER_COMPOSE) down
+
+runner-nuke:
+	@if [ -z "$$FORCE" ]; then \
+		read -p "This deletes the runner and its registration. Continue? [y/N] " ans && \
+		[ "$$ans" = "y" ] || [ "$$ans" = "yes" ]; \
+	fi
+	$(RUNNER_COMPOSE) down -v --remove-orphans
 
 # Open Octopus + Argo CD + Gitea in the default browser, skipping whatever
 # isn't currently up.

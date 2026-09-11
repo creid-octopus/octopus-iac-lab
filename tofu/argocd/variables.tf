@@ -51,8 +51,25 @@ variable "applicationset_github_pat" {
 
 variable "gitops_repo_url" {
   type        = string
-  description = "Repo the bootstrap Application syncs gitops/argocd/ from. Overridden to the local Gitea URL by gitea.auto.tfvars when running offline (see docs/local-gitea.md)."
-  default     = "https://github.com/creid-octopus/octopus-iac-lab"
+  description = <<-EOT
+    Repo the bootstrap Application syncs gitops/argocd/ from.
+
+    Defaults to the local Gitea, NOT github.com, and that's deliberate:
+    everything under gitops/ is read exclusively by the Argo CD running in
+    this local cluster. Nothing in Octopus Cloud ever reads it — the SaaS
+    side drives deployments in through its Gateway, and its `saas`-labelled
+    Applications live in this same cluster. So the local Gitea is always a
+    correct address for these, and committing it means switching git
+    backends no longer requires rewriting and committing gitops/ files.
+
+    Contrast with cac_repo_url in control-plane/app-randomquotes, which
+    must stay github.com by default: Octopus Cloud genuinely cannot reach
+    host.docker.internal, so the SaaS worktree needs the public URL there.
+
+    `make gitea-disable` overrides this back to github.com for running the
+    lab without Gitea at all. See docs/local-gitea.md.
+  EOT
+  default     = "http://host.docker.internal:3000/admin/octopus-iac-lab"
 }
 
 variable "kube_context" {

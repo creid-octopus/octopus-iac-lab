@@ -1,0 +1,102 @@
+# Offline port of .github/workflows/build.yml.
+#
+# Builds the randomquotes image and loads it straight into the Kubernetes
+# nodes. No registry involved, which is the whole point — there's no GHCR
+# reachable at a conference, and Gitea's own registry would need
+# insecure-registry configuration on the host docker daemon first.
+#
+# Every step is `run:`. Nothing uses `uses:`, deliberately: Gitea resolves
+# `uses:` references against github.com unless you mirror the action repos
+# into Gitea and set `github_mirror` (see compose/act-runner-config.yaml).
+# Plain shell has no such dependency, and this workflow only needs git,
+# docker, and curl — all present in the local job image.
+#
+# Differences from the GitHub version, and why:
+#   - no actions/checkout   -> git clone from Gitea over the shared network
+#   - no docker/login-action-> nothing to log into, there's no registry
+#   - no GHCR push          -> docker save + ctr import into each kind node
+#   - no push-build-information / create-release steps yet; Octopus can't see
+#     a package that isn't in a feed, which is the open Phase 3 question.
+
+name: CI / Build Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: octopus-iac-lab/randomquotes
+  # Both nodes of the Docker Desktop kind-based cluster. A pod can be
+  # scheduled on either, so the image has to exist on both or you get
+  # ImagePullBackOff about half the time.
+  KIND_NODES: "desktop-control-plane desktop-worker"
+
+jobs:
+  build:
+    name: Build & load image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout from Gitea
+        # Replaces actions/checkout. `gitea` resolves because the runner
+        # config puts job containers on the Octopus compose network.
+        # GITEA_TOKEN is a user-level Actions secret created by
+        # compose/configure-gitea.sh.
+        run: |
+          set -euo pipefail
+          git clone --depth 1 \
+            "http://${{ secrets.GITEA_USERNAME }}:${{ secrets.GITEA_TOKEN }}@gitea:3000/admin/octopus-iac-lab.git" \
+            src
+          cd src
+          echo "cloned $(git rev-parse --short HEAD)"
+
+      - name: Set version
+        # Same 1.1.<run> scheme as the GitHub workflow so version numbers
+        # stay comparable between the two paths.
+        run: |
+          echo "VERSION=1.1.${{ github.run_number }}" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          cd src
+          docker build \
+            -t "${IMAGE_NAME}:${VERSION}" \
+            -t "${IMAGE_NAME}:latest" \
+            --build-arg "VERSION=${VERSION}" \
+            app
+          docker image inspect "${IMAGE_NAME}:${VERSION}" \
+            --format '    built {{.RepoTags}} {{.Size}} bytes'
+
+      - name: Load image into the cluster
+        # Deliberately not `kind load`: the kind CLI may not be installed,
+        # and Docker Desktop's provisioner doesn't necessarily label its
+        # containers the way `kind get clusters` expects. `ctr import`
+        # against each node needs nothing but the docker socket.
+        #
+        # Namespace k8s.io matters — containerd serves kubelet from that
+        # namespace, so an image imported into the default one is invisible
+        # to Kubernetes.
+        run: |
+          set -euo pipefail
+          TAR=/tmp/${VERSION}.tar
+          docker save "${IMAGE_NAME}:${VERSION}" "${IMAGE_NAME}:latest" -o "$TAR"
+          for node in ${KIND_NODES}; do
+            docker cp "$TAR" "${node}:/tmp/img.tar"
+            docker exec "$node" ctr -n k8s.io images import /tmp/img.tar
+            docker exec "$node" rm -f /tmp/img.tar
+            echo "    loaded into ${node}"
+          done
+          rm -f "$TAR"
+
+      - name: Summary
+        run: |
+          cat <<SUMMARY
+              Image:  ${IMAGE_NAME}:${VERSION}
+              Loaded: ${KIND_NODES}
+
+              Deploy it by referencing that exact tag with
+              imagePullPolicy: IfNotPresent — there's no registry to pull from.
+          SUMMARY

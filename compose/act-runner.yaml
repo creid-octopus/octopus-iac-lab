@@ -1,0 +1,40 @@
+# Gitea Actions runner.
+#
+# Separate compose project again, same reasoning as gitea.yaml: opt-in, and
+# `make up` / `make nuke` stay unaffected.
+#
+# Brought up by `make runner-up`, which fetches a registration token from
+# Gitea first — the token is single-use and short-lived, so it can't live in
+# a committed file. See compose/configure-runner.sh.
+
+name: selfhost-gitea-runner
+
+networks:
+  octopus:
+    external: true
+    name: selfhost-setup_default
+
+services:
+  runner:
+    image: gitea/act_runner:latest
+    container_name: gitea-runner
+    restart: unless-stopped
+    networks:
+      - octopus
+    environment:
+      - CONFIG_FILE=/config.yaml
+      # `gitea`, not localhost: the runner resolves this over the shared
+      # docker network, not from your Mac.
+      - GITEA_INSTANCE_URL=http://gitea:3000
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_REGISTRATION_TOKEN:?run \'make runner-up\', which fetches a token first}
+      - GITEA_RUNNER_NAME=local-runner
+    volumes:
+      - ./act-runner-config.yaml:/config.yaml:ro
+      # The runner spawns job containers on the HOST daemon rather than
+      # running its own dockerd. That's also what lets the build step load
+      # images straight into the kind nodes.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runner-data:/data
+
+volumes:
+  runner-data:

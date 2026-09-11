@@ -32,14 +32,27 @@ Three phases. Phase 1 is done and verifiable now; Phases 2 and 3 are scoped but 
 | 1 | Gitea running, bootstrapped, holding this repo | **Done, verified** |
 | 1b | Reversible switch of Octopus CaC, Platform Hub, and Argo CD onto Gitea | **Done** — `cp-apply`, `ph-apply`, `argo-apply` all clean against Gitea |
 | 1c | Backend-agnostic OCL (`Git.CloneUrl`) + upstream mirror (`gitea-mirror`) | **Done** |
-| 2 | Gitea Actions + `act_runner`, ported build workflow | Not started |
-| 3 | Image distribution (`kind load` into the cluster) + Octopus feed change | Not started |
+| 2 | Gitea Actions + `act_runner`, ported build workflow | **Built, not yet run** |
+| 3 | Octopus feed / package reference for a registry-less image | Not started |
+
+### Asymmetric defaults, and why
+
+The committed defaults are deliberately not all on the same side:
+
+| What | Committed default | Because |
+|---|---|---|
+| `gitops/**` `repoURL`, `gitops_repo_url` | **Gitea** | Read *only* by the Argo CD in this local cluster. Octopus Cloud never reads `gitops/` — it drives deployments in through its Gateway, and its `saas`-labelled Applications live in this same cluster. So the local Gitea is always a correct address. |
+| `cac_repo_url`, `ph_repo_url` | **github.com** | Octopus Cloud reads CaC directly from git and genuinely cannot reach `host.docker.internal`, so the SaaS worktree needs the public URL. |
+
+That's what makes the normal case free: `make gitea-enable` rewrites **zero** files under `gitops/`, because they're already committed as Gitea. It only writes three tofu overrides (`cac_repo_url` ×2, `ph_repo_url`). Verified: gitea mode reports `rewrote 0 file(s)`.
+
+The cost lands on the rarer path instead. `make gitea-disable` (running the lab with no Gitea at all) rewrites 12 `gitops/` files and leaves them uncommitted. That asymmetry is the point: Gitea is the normal case.
 
 ### What's left before the repo truly "doesn't care about github"
 
-1. **The `gitops/` root Applications still hardcode `repoURL`.** This is the last thing forcing the offline setup to be a divergent commit. Fixing it means having the bootstrap Application inject `repoURL` as a Helm value (tofu already knows the backend), so switching touches zero git files. Cost: `gitops/argocd/*.yaml` stops being plain readable YAML, which matters in a repo you demo from. 1 to 2 hours.
-2. **The previews ApplicationSet uses a GitHub pull-request generator**, which talks to api.github.com and has no Gitea equivalent wired up. Previews simply don't work offline today.
-3. **`app-apply` still fails on the demo-branch projects**, because reading a CaC project's deployment settings needs its branch to exist in the configured repo and only `main` is mirrored. Either mirror those branches (`make gitea-mirror REFS="main demo/canary ..."`) or drop the projects.
+1. **The previews ApplicationSet uses a GitHub pull-request generator**, which talks to api.github.com and has no Gitea equivalent wired up. Previews simply don't work offline today.
+2. **`app-apply` still fails on the demo-branch projects**, because reading a CaC project's deployment settings needs its branch to exist in the configured repo and only `main` is mirrored. Either mirror those branches (`make gitea-mirror REFS="main demo/canary ..."`) or drop the projects.
+3. **`cac_repo_url` still points at github for the SaaS worktree**, unavoidably — that's Octopus Cloud's own constraint, not something this repo can fix.
 
 ## Phase 1: what was added
 
@@ -159,17 +172,17 @@ Both directions are reversible and the round trip is byte-identical, verified by
 
 | Target | Mechanism |
 |---|---|
-| `cac_repo_url` (control-plane, app-randomquotes), `ph_repo_url`, `gitops_repo_url` | Generated `gitea.auto.tfvars` per stack (gitignored) |
-| 12 `repoURL` fields under `gitops/` | Text rewrite in the working tree — the one remaining wart, see "What's left" |
-| `.octopus/runbooks/` git clones | **No longer touched.** They use `#{Git.CloneUrl}`, a tofu-managed library variable that carries whatever backend the stack is configured for |
+| `cac_repo_url` (control-plane, app-randomquotes), `ph_repo_url` | Generated `git-backend.auto.tfvars` per stack (gitignored) |
+| `gitops/**` `repoURL` and `gitops_repo_url` | **Nothing to do in gitea mode** — Gitea is the committed default. Only `gitea-disable` rewrites them. |
+| `.octopus/runbooks/` git clones | **Never touched.** They use `#{Git.CloneUrl}`, a tofu-managed library variable carrying whatever backend the stack is configured for. |
 | Octopus's git credential + the `GitHub.Token` and `Git.CloneUrl` library variables | Makefile swaps `TF_VAR_github_username`/`TF_VAR_github_pat` to `admin`/`$GITEA_TOKEN` when `GITEA_ENABLED=true` |
 
 One credential is deliberately *not* swapped: `applicationset_github_pat`, which feeds the `github-pat` secret the previews ApplicationSet uses to authenticate against api.github.com. It always comes from `GITHUB_PAT`, because handing GitHub a Gitea token just gets it rejected.
 
-Two things forced that split, both worth knowing if you ever debug this:
+Two things worth knowing if you ever debug this:
 
-- **The tofu side can't use `TF_VAR_*` for the repo URLs.** `cac_repo_url` and `ph_repo_url` are set in each stack's committed `defaults.auto.tfvars`, and `*.auto.tfvars` files *outrank* environment variables in OpenTofu's precedence order, so a `TF_VAR_cac_repo_url` export would be silently ignored. `*.auto.tfvars` files load lexicographically with later ones winning, and "gitea" sorts after "defaults", so a generated `gitea.auto.tfvars` lands on top. Switching back is just deleting the file.
-- **The `gitops/` and `.octopus/` URLs can't be templated by tofu at all.** Argo CD and Octopus read those files *from git*, not from tofu state, so the change has to be a real committed edit. Hence the text rewrite, and hence the ordering below.
+- **The tofu side can't use `TF_VAR_*` for the repo URLs.** `cac_repo_url` and `ph_repo_url` are set in each stack's committed `defaults.auto.tfvars`, and `*.auto.tfvars` files *outrank* environment variables in OpenTofu's precedence order, so a `TF_VAR_cac_repo_url` export is silently ignored.
+- **The override filename has to sort after `defaults`.** `*.auto.tfvars` load lexicographically and later files win, so `git-backend.auto.tfvars` beats `defaults.auto.tfvars` (g > d). An earlier attempt named `backend.auto.tfvars` was silently a no-op for exactly this reason (b < d). Don't rename it to anything alphabetically earlier.
 
 ### Order of operations
 
@@ -216,6 +229,96 @@ make cp-plan
 ```
 
 Expect no changes. If it wants to change the git credential's username, `GITEA_ENABLED` isn't being picked up from `.env`.
+
+## Phase 2: Actions
+
+```bash
+make runner-up     # builds the job image if needed, registers a runner
+```
+
+Re-runnable, and it's the fix if the runner ever shows offline: registration tokens are single-use, so it fetches a fresh one and recreates the container every time.
+
+### What was added
+
+| File | Purpose |
+|---|---|
+| `compose/act-runner.yaml` | `act_runner` service, joins the Octopus network, mounts the host docker socket |
+| `compose/act-runner-config.yaml` | Runner config, tuned for offline (see below) |
+| `compose/runner-image/Dockerfile` | The job container, ~100MB, built locally |
+| `compose/configure-runner.sh` | Fetches a token, starts the runner, verifies it actually registered |
+| `.gitea/workflows/build.yml` | Offline port of `.github/workflows/build.yml` |
+
+### Three offline problems, and how each is handled
+
+1. **`uses:` resolves against github.com.** Gitea looks up action references on github.com unless told otherwise, so `uses: actions/checkout@v4` needs internet even though Gitea doesn't. The workflow therefore uses **only `run:` steps** — `git clone` replaces `actions/checkout`, plain `docker build` replaces `docker/build-push-action`. If you'd rather use real actions later, mirror the action repos into Gitea and set `github_mirror: http://gitea:3000` in `compose/act-runner-config.yaml`; the setting is there, commented, for exactly that.
+
+2. **Job images pull from Docker Hub.** The instruqt tracks point at `docker.gitea.com/runner-images:ubuntu-latest` (multi-GB) with `force_pull: true`, which re-pulls every single run. Here the label points at a locally built `octopus-iac-lab/runner:local` and `force_pull` is `false`, so nothing is ever looked up in a registry. The one-time cost is pulling the `docker:cli` base layer while you still have network.
+
+3. **Job containers can't resolve `gitea`.** By default each job lands on its own bridge network and the clone step fails with "could not resolve host". `container.network` pins them to `selfhost-setup_default`, the same network Octopus and Gitea share.
+
+### No registry involved
+
+The build loads the image straight into both Kubernetes nodes rather than pushing anywhere:
+
+```
+docker save → docker cp → docker exec <node> ctr -n k8s.io images import
+```
+
+Deliberately not `kind load`: the kind CLI may not be installed, and Docker Desktop's provisioner doesn't necessarily label its containers the way `kind get clusters` expects. `ctr import` needs nothing but the docker socket. The `k8s.io` namespace matters — containerd serves kubelet from that namespace, so an image imported into the default one is invisible to Kubernetes. Both nodes get it because a pod can be scheduled on either.
+
+### Verification
+
+**1. Runner registered**
+
+```bash
+curl -fsS -u admin:Admin123! http://localhost:3000/api/v1/admin/actions/runners | jq '.total_count, .runners[].name'
+```
+
+Expect `1` and `local-runner`. Also visible at `http://localhost:3000/-/admin/actions/runners`.
+
+**2. Job image exists locally**
+
+```bash
+docker image inspect octopus-iac-lab/runner:local --format '{{.RepoTags}} {{.Size}}'
+```
+
+If this is missing, jobs fail with a confusing "image not found" rather than pulling, because `force_pull` is off by design.
+
+**3. Actions secrets are set**
+
+```bash
+curl -fsS -H "Authorization: token $GITEA_TOKEN" \
+  http://localhost:3000/api/v1/user/actions/secrets | jq '.secrets[].name'
+```
+
+Expect `GITEA_TOKEN` and `GITEA_USERNAME`. The workflow's clone step needs both.
+
+**4. Run the workflow**
+
+Gitea UI → `admin/octopus-iac-lab` → Actions → "CI / Build Image" → Run workflow. Or push a change under `app/` and `make gitea-push`.
+
+**5. The image actually landed in the cluster**
+
+```bash
+docker exec desktop-worker ctr -n k8s.io images ls | grep randomquotes
+```
+
+Expect your `1.1.<run>` tag. This is the check that matters — a green workflow that didn't reach the nodes is worthless.
+
+**6. Watch it if it fails**
+
+```bash
+make runner-logs
+```
+
+### The open question this leaves
+
+The image is now in the cluster but **Octopus doesn't know it exists.** The deployment process pulls `creid-octopus/octopus-iac-lab` from the `ghcr` feed, which is unreachable offline. That's Phase 3, and the options are:
+
+1. Point an Octopus Docker feed at Gitea's built-in container registry, and push there instead. Needs insecure-registry configuration on the host docker daemon, since Gitea is HTTP.
+2. Drop the package reference from the deployment process and pin the image tag directly with `imagePullPolicy: IfNotPresent`, which is what the loaded image already supports.
+
+Option 2 is less faithful to how the cloud path works but needs no daemon configuration.
 
 ## Re-running and resetting
 
