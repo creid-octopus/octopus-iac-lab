@@ -1,0 +1,73 @@
+# Local Gitea — the offline stand-in for github.com.
+#
+# Deliberately a SEPARATE compose project from docker-compose.yml, not a
+# service inside it. Two reasons:
+#   1. `make up` / `make nuke` keep working untouched, so the normal
+#      GitHub-backed lab is unaffected by anything in here.
+#   2. Gitea is opt-in. Bring it up only for offline/conference runs.
+#
+# It joins the main stack's network as an external network so the Octopus
+# container can resolve `gitea` by name. That network only exists once
+# `make up` has run, so ordering is: `make up` → `make gitea-up`.
+#
+# Addressing, which matters more than it looks:
+#   - From your Mac (browser, git push):     http://localhost:3000
+#   - From the Octopus container:            http://gitea:3000
+#   - From a Kubernetes pod (Argo CD):       http://host.docker.internal:3000
+# The cluster is its own network namespace and cannot resolve `gitea`, so
+# anything BOTH Octopus and Argo CD read (the CaC repo URL, Application
+# repoURLs) must use the host.docker.internal form. See docs/local-gitea.md.
+
+name: selfhost-gitea
+
+networks:
+  octopus:
+    external: true
+    name: selfhost-setup_default
+
+services:
+  gitea:
+    image: docker.gitea.com/gitea:1.24
+    container_name: gitea
+    restart: unless-stopped
+    networks:
+      - octopus
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      # sqlite3 keeps this to a single container — no second DB to babysit,
+      # and the whole instance lives in one named volume.
+      - GITEA__database__DB_TYPE=sqlite3
+      # Skips the interactive first-run installer wizard. Without this the
+      # API 404s until someone completes setup in a browser.
+      - GITEA__security__INSTALL_LOCK=true
+      # ROOT_URL is what Gitea prints in clone buttons and web links, so it
+      # points at localhost for human use. Octopus and Argo CD get the
+      # host.docker.internal form explicitly in their own config instead —
+      # host.docker.internal does NOT resolve on the Mac itself, only inside
+      # containers, so using it here would break every link in the browser.
+      - GITEA__server__ROOT_URL=http://localhost:3000/
+      - GITEA__server__DOMAIN=localhost
+      - GITEA__server__SSH_DOMAIN=localhost
+      - GITEA__server__SSH_PORT=222
+      # Lab instance — nobody else should be signing up.
+      - GITEA__service__DISABLE_REGISTRATION=true
+      # Needed for Phase 2 (act_runner). Harmless before then.
+      - GITEA__actions__ENABLED=true
+    volumes:
+      - gitea-data:/data
+      # NOTE: no /etc/timezone or /etc/localtime bind mounts. The instruqt
+      # tracks mount those, but they don't exist on macOS and the container
+      # fails to start. Gitea defaults to UTC, which is fine here.
+    ports:
+      - "3000:3000"   # HTTP + API
+      - "222:22"      # git over SSH (unused by the bootstrap, HTTP is simpler)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  gitea-data:
