@@ -6,11 +6,11 @@ cac_branch    = "main"
 cac_base_path = ".octopus"
 
 demo_branches = [
-  "demo/blue-green",
-  "demo/bg-preview",
-  "demo/canary",
+  # "demo/blue-green",
+  # "demo/bg-preview",
+  # "demo/canary",
   "demo/platform-hub-opa",
-  "demo/process-template",
-  "demo/servicenow-cr-gate",
-  "demo/smoke-step-template",
+  # "demo/process-template",
+  # "demo/servicenow-cr-gate",
+  # "demo/smoke-step-template",
 ]

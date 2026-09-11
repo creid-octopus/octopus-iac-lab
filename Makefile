@@ -25,27 +25,24 @@ TOFU_APPLY_FLAGS ?=
 # OCTOPUS_URL is per-worktree: local has http://localhost:8090, SaaS has the
 # https://<id>.octopus.app URL.
 #
-# Demo branches are OPT-IN. Previously every make target ran `git ls-remote`
-# against origin and fed whatever demo/* branches existed straight into
-# tofu, which meant app-apply always tried to build all of them — including
-# the ones whose OCL references channels/step templates that don't exist in
-# a fresh Space. It also put a network call in the path of every single
-# target, which is the last thing you want in offline mode. Now:
-#   DEMO_BRANCHES='["demo/canary"]'   explicit list, wins over everything
-#   DEMO_BRANCHES_DISCOVER=true       auto-discover from origin (old behaviour)
-#   neither set                       no demo projects at all (default)
+# Demo branches live in tofu/app-randomquotes/defaults.auto.tfvars, NOT here.
+# Comment lines in or out of `demo_branches` there to choose which demo
+# projects get built.
+#
+# There is deliberately no env-var override: *.auto.tfvars outranks TF_VAR_*
+# in OpenTofu's precedence order, so a DEMO_BRANCHES export is silently
+# ignored while that file sets the value. An earlier version of this Makefile
+# exported one anyway and it did nothing, which cost an afternoon of
+# "why is it still building all seven".
+#
+# Earlier still, this ran `git ls-remote` against origin on every target to
+# discover demo/* branches — a network call in the path of every single make
+# invocation, which is the last thing you want in offline mode. Gone.
 define load_env
 	set -a; \
 	[ -f .env ] || { echo "Missing .env — copy .env.example and fill it in."; exit 1; }; \
 	source .env; set +a; \
 	[ -n "$$OCTOPUS_URL" ] || { echo "OCTOPUS_URL is unset in .env (e.g. http://localhost:8090 or https://<id>.octopus.app)"; exit 1; }; \
-	if [ -n "$${DEMO_BRANCHES:-}" ]; then \
-	  DEMO_BRANCHES="$$DEMO_BRANCHES"; \
-	elif [ "$${DEMO_BRANCHES_DISCOVER:-false}" = "true" ]; then \
-	  DEMO_BRANCHES=$$(git ls-remote --heads origin 'demo/*' 2>/dev/null | awk '{print $$2}' | sed 's|refs/heads/||' | jq -R . | jq -s -c . 2>/dev/null || echo '[]'); \
-	else \
-	  DEMO_BRANCHES='[]'; \
-	fi; \
 	export TF_VAR_octopus_url="$$OCTOPUS_URL" \
 	       TF_VAR_octopus_api_key="$$OCTOPUS_API_KEY" \
 	       TF_VAR_github_pat="$$GITHUB_PAT" \
@@ -53,7 +50,6 @@ define load_env
 	       TF_VAR_octopus_polling_url_from_cluster="$${OCTOPUS_POLLING_URL_FROM_CLUSTER:-https://host.docker.internal:10943}" \
 	       TF_VAR_enable_platform_hub="$${OCTOPUS_PLATFORM_HUB_ENABLED:-true}" \
 	       TF_VAR_space_is_default="$${OCTOPUS_SPACE_IS_DEFAULT:-true}" \
-	       TF_VAR_demo_branches="$$DEMO_BRANCHES" \
 	       TF_VAR_sealed_secrets_tls_b64="$${SEALED_SECRETS_TLS_B64:-}" \
 	       TF_VAR_applicationset_github_pat="$${GITHUB_PAT:-}"; \
 	if [ "$${GITEA_ENABLED:-false}" = "true" ]; then \
@@ -318,8 +314,12 @@ template-share:
 # tenant links, triggers) couldn't have been created without the project in
 # state, so a normal `make app-apply` picks those up afterwards.
 app-import-demos:
-	@$(load_env) cd $(APP_DIR) && \
-	for b in $$(echo "$$TF_VAR_demo_branches" | jq -r '.[]' 2>/dev/null); do \
+	@$(load_env) \
+	branches=$$(sed -n '/^demo_branches *= *\[/,/^\]/p' $(APP_DIR)/defaults.auto.tfvars \
+	  | grep -v '^[[:space:]]*#' | grep -oE '"demo/[^"]+"' | tr -d '"'); \
+	[ -n "$$branches" ] || { echo "No uncommented demo_branches in $(APP_DIR)/defaults.auto.tfvars — nothing to import."; exit 0; }; \
+	cd $(APP_DIR) && \
+	for b in $$branches; do \
 	  slug=$${b#demo/}; \
 	  addr="octopusdeploy_project.branch_demo[\"$$b\"]"; \
 	  if tofu state list 2>/dev/null | grep -qxF "$$addr"; then \
