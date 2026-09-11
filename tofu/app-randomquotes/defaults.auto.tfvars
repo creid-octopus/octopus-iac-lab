@@ -10,7 +10,7 @@ demo_branches = [
   # "demo/bg-preview",
   # "demo/canary",
   "demo/platform-hub-opa",
-  # "demo/process-template",
+  "demo/process-template",
   # "demo/servicenow-cr-gate",
   # "demo/smoke-step-template",
 ]
