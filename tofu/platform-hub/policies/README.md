@@ -7,6 +7,23 @@ Rego policies enforced at two points in the delivery pipeline:
 
 The bundle itself is the same set of Rego files for both enforcement points. Today they're read from this directory; once the `octopusdeploy` provider exposes Platform Hub policy resources (none as of v1.12), they'll be registered as a published bundle so consuming projects pull the latest on every deploy.
 
+## Where the Gatekeeper manifests live
+
+**Not here.** The `ConstraintTemplate` and `Constraint` YAML for the admission half live in **`tofu/k8s-agent/constraints/`** and are applied by `tofu/k8s-agent/gatekeeper.tf`, on `main`, cluster-wide.
+
+This directory once carried a byte-identical duplicate of those two files. Nothing referenced it — `gatekeeper.tf` resolves `${path.module}/constraints/`, which is the agent stack's copy — so editing the copy here produced no effect and no error. Deleted for that reason.
+
+If you change the replica caps, edit `tofu/k8s-agent/constraints/k8sreplicaspertier-template.yaml` and run `make agent-apply`. The `null_resource` hashes the file into its `triggers`, so edits do re-apply.
+
+Verify enforcement rather than trusting `TOTAL-VIOLATIONS 0`, which only means nothing currently violates it:
+
+```bash
+kubectl create deploy opa-test --image=nginx --replicas=3 --dry-run=client -o yaml \
+  | kubectl label -f - --local -o yaml tenant.octopus.com/tier=free \
+  | kubectl apply -f -
+# expect: denied — tier=free allows max 1 replicas, got 3
+```
+
 ## Bundle contents
 
 | Rule | Catches |
