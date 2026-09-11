@@ -102,6 +102,11 @@ fi
 
 # Rewrite one URL form to another across the files that hold it.
 #
+# NOTE the `.octopus*` glob, not `.octopus`. Demo branches carry their own
+# CaC payload in `.octopus-<slug>/` (a git mv of `.octopus/`), and those
+# copies contain the same URLs and package ids. Scanning only `.octopus`
+# left demo payloads stuck on whatever backend they were authored against.
+#
 # Order within the sed matters: the credential-bearing clone URL and the
 # `.git` form both CONTAIN the bare web form as a prefix, so they have to be
 # replaced first or the bare-form rule would mangle them into a hybrid.
@@ -121,7 +126,7 @@ flip_files() {
     changed=$((changed + 1))
   done < <(grep -rlF -e "${from_web}" -e "${from_clone}" \
              --include="*.yaml" --include="*.yml" --include="*.ocl" \
-             gitops .octopus 2>/dev/null | sort -u)
+             gitops .octopus* 2>/dev/null | sort -u)
 
   info "rewrote ${changed} file(s)"
 }
@@ -167,7 +172,7 @@ flip_package_id() {
     sed_inplace "s|package_id = \"${from}\"|package_id = \"${to}\"|g" "$f"
     info "  $f"
     changed=$((changed + 1))
-  done < <(grep -rlF "package_id = \"${from}\"" --include="*.ocl" .octopus 2>/dev/null | sort -u)
+  done < <(grep -rlF "package_id = \"${from}\"" --include="*.ocl" .octopus* 2>/dev/null | sort -u)
   info "rewrote package_id in ${changed} file(s)"
 }
 
