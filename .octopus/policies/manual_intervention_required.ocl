@@ -1,7 +1,6 @@
 name = "Manual intervention required"
 description = "Requires manual intervention steps to be present and not skipped on deployments to Production environments."
 violation_action = "block"
-violation_reason = "Deployments to production require Manual Intervention steps to be enabled and not skipped."
 
 conditions {
     rego = <<-EOT
