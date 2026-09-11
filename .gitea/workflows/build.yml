@@ -76,18 +76,28 @@ jobs:
         # containers the way `kind get clusters` expects. `ctr import`
         # against each node needs nothing but the docker socket.
         #
+        # Streamed over stdin rather than `docker cp` + a file in the node.
+        # The cp route has two filesystems in play (the job container's, then
+        # the node's) and failed with "ctr: open /tmp/img.tar: no such file"
+        # even though cp reported success. Piping keeps it to one hop.
+        #
         # Namespace k8s.io matters — containerd serves kubelet from that
         # namespace, so an image imported into the default one is invisible
         # to Kubernetes.
         run: |
           set -euo pipefail
-          TAR=/tmp/${VERSION}.tar
+          TAR=/tmp/image.tar
           docker save "${IMAGE_NAME}:${VERSION}" "${IMAGE_NAME}:latest" -o "$TAR"
+          ls -l "$TAR"
+
           for node in ${KIND_NODES}; do
-            docker cp "$TAR" "${node}:/tmp/img.tar"
-            docker exec "$node" ctr -n k8s.io images import /tmp/img.tar
-            docker exec "$node" rm -f /tmp/img.tar
-            echo "    loaded into ${node}"
+            echo "--- ${node}"
+            docker exec -i "$node" ctr -n k8s.io images import - < "$TAR"
+            # Verify rather than trust: a silent no-op here is the difference
+            # between a green build and a deployment that can't find its image.
+            docker exec "$node" ctr -n k8s.io images ls \
+              | grep "${IMAGE_NAME}:${VERSION}" \
+              || { echo "ERROR: import reported success but image is absent on ${node}"; exit 1; }
           done
           rm -f "$TAR"
 

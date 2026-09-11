@@ -305,7 +305,20 @@ docker exec desktop-worker ctr -n k8s.io images ls | grep randomquotes
 
 Expect your `1.1.<run>` tag. This is the check that matters — a green workflow that didn't reach the nodes is worthless.
 
-**6. Watch it if it fails**
+**6. Can Kubernetes actually run the loaded image?**
+
+This is the check that gates Phase 3. "Present in containerd" and "a pod can start from it" are different claims.
+
+```bash
+kubectl run img-test --rm --restart=Never \
+  --image=octopus-iac-lab/randomquotes:1.1.1 \
+  --image-pull-policy=IfNotPresent \
+  --command -- echo ok
+```
+
+Substitute the real tag. `ok` means the whole chain works. `ErrImageNeverPull` means the image reference didn't normalize to what the pod spec asked for — containerd stores short names as `docker.io/<name>`, so compare against what check 5 printed. No amount of Octopus configuration fixes a mismatch here.
+
+**7. Watch it if it fails**
 
 ```bash
 make runner-logs
