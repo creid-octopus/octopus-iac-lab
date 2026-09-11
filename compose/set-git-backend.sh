@@ -53,7 +53,7 @@ GT_WEB="http://host.docker.internal:3000/${GITEA_USER}/${GITEA_REPO}"
 GT_GIT="http://host.docker.internal:3000/${GITEA_USER}/${GITEA_REPO}.git"
 GT_CLONE="http://${GITEA_USER}:#{GitHub.Token}@host.docker.internal:3000/${GITEA_USER}/${GITEA_REPO}.git"
 
-TFVARS_STACKS=(tofu/control-plane tofu/app-randomquotes tofu/platform-hub tofu/argocd)
+TFVARS_STACKS=(tofu/control-plane tofu/app-randomquotes tofu/platform-hub tofu/argocd tofu/k8s-agent)
 
 # Generated per-stack override. Named for what it does rather than for one
 # of the two backends, because BOTH directions need overrides — the
@@ -137,6 +137,30 @@ flip_files() {
 GH_PKG="creid-octopus/octopus-iac-lab"
 GT_PKG="${GITEA_USER}/${GITEA_REPO}"
 
+# The Helm chart composes the image as
+#   {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}
+# so the registry and namespace have to flip with the backend too. Committed
+# state is Gitea, same policy as the rest of gitops/.
+#
+# Tags are deliberately NOT touched: Octopus's image-tag-update step owns
+# those, and the two registries hold different build numbers anyway.
+GH_REGISTRY="ghcr.io"
+GT_REGISTRY="host.docker.internal:3000"
+
+flip_image_ref() {
+  local from_reg="$1" to_reg="$2" from_repo="$3" to_repo="$4" changed=0 f
+  while IFS= read -r f; do
+    sed_inplace \
+      -e "s|  registry: ${from_reg}$|  registry: ${to_reg}|" \
+      -e "s|  repository: ${from_repo}$|  repository: ${to_repo}|" \
+      "$f"
+    info "  $f"
+    changed=$((changed + 1))
+  done < <(grep -rlE "^  (registry|repository): " \
+             gitops/charts/randomquotes/values-*.yaml 2>/dev/null | sort -u)
+  info "rewrote image refs in ${changed} file(s)"
+}
+
 flip_package_id() {
   local from="$1" to="$2" changed=0 f
   while IFS= read -r f; do
@@ -159,6 +183,10 @@ case "${BACKEND}" in
 container_registry_url = \"http://host.docker.internal:3000\""
     write_override tofu/app-randomquotes "cac_repo_url = \"${GT_GIT}\""
     write_override tofu/platform-hub     "ph_repo_url  = \"${GT_WEB}\""
+    # Lets containerd on the cluster nodes pull from the plain-HTTP Gitea
+    # registry. Without it Octopus resolves a version fine and then the
+    # deployment dies with ImagePullBackOff.
+    write_override tofu/k8s-agent        "insecure_registry_host = \"host.docker.internal:3000\""
 
     step "Ensuring gitops/ URLs point at Gitea"
     # Normally a no-op: Gitea URLs are the committed default under gitops/.
@@ -167,6 +195,9 @@ container_registry_url = \"http://host.docker.internal:3000\""
 
     step "Pointing OCL package_id at the Gitea registry namespace"
     flip_package_id "${GH_PKG}" "${GT_PKG}"
+
+    step "Pointing chart image refs at the Gitea registry"
+    flip_image_ref "${GH_REGISTRY}" "${GT_REGISTRY}" "${GH_PKG}" "${GT_PKG}"
 
     step "Recording the switch in .env"
     if grep -q '^GITEA_ENABLED=' .env 2>/dev/null; then
@@ -205,6 +236,9 @@ EOF
 
     step "Pointing OCL package_id back at GHCR"
     flip_package_id "${GT_PKG}" "${GH_PKG}"
+
+    step "Pointing chart image refs back at GHCR"
+    flip_image_ref "${GT_REGISTRY}" "${GH_REGISTRY}" "${GT_PKG}" "${GH_PKG}"
 
     step "Recording the switch in .env"
     if grep -q '^GITEA_ENABLED=' .env 2>/dev/null; then

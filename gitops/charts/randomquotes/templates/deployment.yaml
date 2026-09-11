@@ -29,7 +29,17 @@ spec:
     spec:
       containers:
         - name: randomquotes
-          image: ghcr.io/{{ .Values.image.repository }}:{{ .Values.image.tag }}
+          # Registry is a value, not hardcoded. It used to be a literal
+          # `ghcr.io/`, which meant every pod tried to pull from GitHub no
+          # matter what the Octopus feed was pointed at — offline that's an
+          # unreachable host and the Application sits Degraded on
+          # ImagePullBackOff.
+          image: {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}
+          # IfNotPresent so a locally-loaded image wins. The Gitea Actions
+          # workflow imports each build straight into containerd on both
+          # nodes, so pods still start even if the registry is unreachable
+          # mid-demo. With Always, that safety net does nothing.
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "IfNotPresent" }}
           ports:
             - containerPort: 80
           resources:

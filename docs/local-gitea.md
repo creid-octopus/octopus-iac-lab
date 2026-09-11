@@ -324,6 +324,16 @@ Substitute the real tag. `ok` means the whole chain works. `ErrImageNeverPull` m
 make runner-logs
 ```
 
+### "no matching online runner with ubuntu-latest"
+
+Sounds like a label problem, isn't. It means no *online* runner is available, and the usual cause is anything that recreated the runner container, most often a Docker Desktop Apply & Restart.
+
+```bash
+make runner-up
+```
+
+Registration tokens are single-use and act_runner stores its identity in a `.runner` file, so a container that comes back without that file runs but never registers. The config now points `runner.file` at `/data/.runner` inside the mounted volume so this self-heals on restart, but `make runner-up` is always the fix if it doesn't.
+
 ## Phase 3: Octopus feed against the Gitea registry
 
 Chosen approach: point the **same** Octopus feed at Gitea's built-in container registry rather than adding a second one, because the OCL references the feed by slug (`feed = "ghcr"`) and renaming the feed would silently break the deployment process.
@@ -352,14 +362,24 @@ Docker Desktop → Settings → Docker Engine, then Apply & Restart:
 
 Needed because the **host daemon** performs the push (the job container just drives it over the mounted socket). Note this is machine-global, not scoped to this project, though it's narrow — one host:port.
 
-### Still outstanding
+### containerd on the cluster nodes
 
-**containerd on the kind nodes doesn't know the registry is plain HTTP**, so kubelet will refuse to pull from it even though Octopus resolves versions fine. Two consequences:
+Octopus resolving a version and kubelet pulling the image are two different consumers. Octopus Server queries the registry from its own process (plain HTTP, no Docker involved, which is why the feed test passed with no configuration). But containerd refuses plain-HTTP registries unless told otherwise, so without this a deployment gets a valid version from Octopus and then dies with `ImagePullBackOff`.
 
-1. That config needs writing into both nodes (`/etc/containerd/certs.d/...`) and it does **not** survive a Docker Desktop Kubernetes reset, so it belongs in `tofu/k8s-agent` as a `null_resource` rather than as a manual step.
-2. Until then, deployments work only because the workflow *also* imports the image into containerd directly, so `imagePullPolicy: IfNotPresent` finds it locally. That's the belt-and-braces worth keeping even after the registry pull works.
+`tofu/k8s-agent/insecure_registry.tf` handles it, applied by `make agent-apply`:
 
-Also untested: whether Octopus's feed trigger fires off a new tag appearing in the Gitea registry the way it does for GHCR. If it does, the CI-to-release path works unchanged. If not, the workflow needs an explicit release-creation step.
+- Writes `/etc/containerd/certs.d/<registry>/hosts.toml` on each node with `skip_verify` and plain-HTTP capabilities.
+- Checks whether containerd's `config_path` already points at `certs.d` (kind normally sets it) and only appends it plus restarts containerd if it doesn't. `hosts.toml` alone is picked up dynamically, so the common case needs no restart.
+- Verifies with `crictl pull` rather than trusting the config.
+- Gated on `insecure_registry_host`, empty by default, set by `gitea-enable`. Doing nothing in GitHub mode.
+
+**It lives in tofu specifically because node-level config does not survive a Docker Desktop Kubernetes reset.** As a manual step it would vanish and resurface weeks later as an `ImagePullBackOff` with no obvious cause.
+
+If `cluster_node_containers` doesn't match your cluster (it defaults to `desktop-control-plane` / `desktop-worker`), the apply fails loudly rather than half-configuring. `kubectl get nodes` will tell you the right names.
+
+### Still untested
+
+Whether Octopus's feed trigger fires when a new tag appears in the Gitea registry, the way it does for GHCR. If it does, the CI-to-release path works unchanged. If not, the workflow needs an explicit release-creation step, and it can reach Octopus as `octopus:8080` since job containers share that network.
 
 ## Re-running and resetting
 

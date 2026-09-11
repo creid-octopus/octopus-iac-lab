@@ -17,7 +17,17 @@ log:
   level: info
 
 runner:
-  file: .runner
+  # Absolute path into the mounted volume, NOT the default relative `.runner`.
+  #
+  # act_runner stores its identity and labels here at registration time, and
+  # registration tokens are single-use. With the default relative path the
+  # file lives in the container's filesystem, so anything that recreates the
+  # container (notably a Docker Desktop Apply & Restart) leaves the runner
+  # running but unregistered. Gitea then reports "no matching online runner
+  # with ubuntu-latest", which sounds like a label problem and isn't.
+  #
+  # Under /data it survives, so restarts self-heal with no re-registration.
+  file: /data/.runner
   capacity: 1
   timeout: 1h
   shutdown_timeout: 0s
