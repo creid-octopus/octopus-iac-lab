@@ -1,8 +1,5 @@
 connectivity_policy {}
 
 versioning_strategy {
-    donor_package {
-        package = "randomquotes-image"
-        step = "deploy-manifests"
-    }
+    template = "#{Octopus.Date.Year}.#{Octopus.Date.Month}.#{Octopus.Date.Day}.i"
 }
