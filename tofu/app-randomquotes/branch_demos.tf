@@ -90,7 +90,7 @@ resource "octopusdeploy_tenant_project" "branch_demo_tenants" {
   environment_ids = each.value.tenant == "acme_corp" ? [
     local.cp.environment_ids.dev,
     local.cp.environment_ids.production,
-  ] : [
+    ] : [
     local.cp.environment_ids.production,
   ]
 }

@@ -11,8 +11,8 @@ resource "octopusdeploy_space" "this" {
   # Pin the slug — it's the stable interface CI references (the auto-generated
   # `Spaces-N` ID increments every destroy/recreate). Renaming the Space won't
   # invalidate GHA secrets when the slug is locked here.
-  slug                  = "iac-sandbox"
-  description           = var.space_description
+  slug        = "iac-sandbox"
+  description = var.space_description
   # Make IaC Sandbox the post-login landing space — otherwise non-admin
   # users (dev / prod-deployer) land in the empty Default space and see
   # the "Deploy your first application" welcome screen. SaaS overrides to

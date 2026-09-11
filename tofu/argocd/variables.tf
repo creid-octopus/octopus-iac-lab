@@ -33,6 +33,22 @@ variable "octopus_grpc_plaintext" {
   default     = false
 }
 
+variable "applicationset_github_pat" {
+  type        = string
+  sensitive   = true
+  description = <<-EOT
+    GitHub PAT for the ApplicationSet pull-request generator, which talks to
+    api.github.com regardless of which git backend the lab reads from.
+
+    Deliberately separate from var.github_pat: in Gitea mode the Makefile
+    swaps github_pat for the Gitea token, and feeding that to this secret
+    would hand GitHub a credential it rejects. Always sourced from
+    GITHUB_PAT in .env. Empty is fine — the generator falls back to
+    unauthenticated calls and just hits rate limits sooner.
+  EOT
+  default     = ""
+}
+
 variable "gitops_repo_url" {
   type        = string
   description = "Repo the bootstrap Application syncs gitops/argocd/ from. Overridden to the local Gitea URL by gitea.auto.tfvars when running offline (see docs/local-gitea.md)."

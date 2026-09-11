@@ -68,7 +68,7 @@ process {
                     MSG=$(printf '%s' "#{Maintenance.Message}" | sed -e 's/[\\&|]/\\&/g')
 
                     WORK=$(mktemp -d)
-                    git clone "http://admin:#{GitHub.Token}@host.docker.internal:3000/admin/octopus-iac-lab.git" "$WORK"
+                    git clone "#{Git.CloneUrl}" "$WORK"
                     cd "$WORK"
                     git config user.email "octopus@octopus.com"
                     git config user.name  "Octopus"

@@ -38,6 +38,31 @@ resource "octopusdeploy_variable" "github_token" {
   sensitive_value = var.github_pat
 }
 
+# Ready-to-use authenticated clone URL for runbook script steps.
+#
+# Exists so OCL never hardcodes a git host. Before this, the maintenance
+# runbooks embedded `github.com/...` (or `host.docker.internal:3000/...`)
+# directly in their script bodies, which meant switching the lab between
+# github.com and the local Gitea required editing and committing OCL — the
+# offline setup became a divergent commit instead of the same content
+# running against a different backend.
+#
+# Now the runbooks just `git clone "#{Git.CloneUrl}"` and this variable
+# carries whatever backend the stack is configured for. Credentials are
+# injected after the scheme, which works for both forms:
+#   https://<user>:<pat>@github.com/owner/repo.git
+#   http://admin:<token>@host.docker.internal:3000/admin/repo.git
+#
+# Sensitive because the token is part of the value. Anything cloning with
+# it inherits push rights, which is what the maintenance runbooks need.
+resource "octopusdeploy_variable" "git_clone_url" {
+  owner_id        = octopusdeploy_library_variable_set.lab_source.id
+  name            = "Git.CloneUrl"
+  type            = "Sensitive"
+  is_sensitive    = true
+  sensitive_value = replace(var.cac_repo_url, "://", "://${var.github_username}:${var.github_pat}@")
+}
+
 # Worker pool name to target for bash script steps. SaaS's default dynamic
 # worker is Windows ("Hosted Windows") and there's no /bin/bash there;
 # pin to "Hosted Ubuntu" instead. Local self-host has only "Default Worker

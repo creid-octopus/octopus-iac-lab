@@ -35,7 +35,7 @@ locals {
         { tmpl = "Featured.Mood", value = b.mood },
         { tmpl = "Brand.Icon", value = b.icon },
         { tmpl = "Brand.Color", value = b.color },
-      ] : "${tkey}.${pair.tmpl}" => {
+        ] : "${tkey}.${pair.tmpl}" => {
         tenant_key  = tkey
         template_id = lookup(local.template_ids, pair.tmpl, null)
         value       = pair.value

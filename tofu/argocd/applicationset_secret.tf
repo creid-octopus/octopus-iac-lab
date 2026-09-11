@@ -16,6 +16,8 @@ resource "kubernetes_secret_v1" "argocd_github_pat" {
   }
 
   data = {
-    token = var.github_pat
+    # NOT var.github_pat — that one gets swapped to the Gitea token in
+    # offline mode, and this secret authenticates against api.github.com.
+    token = var.applicationset_github_pat
   }
 }

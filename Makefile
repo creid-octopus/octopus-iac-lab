@@ -21,12 +21,28 @@ TOFU_APPLY_FLAGS ?=
 # Non-sensitive values come from each stack's committed defaults.auto.tfvars.
 # OCTOPUS_URL is per-worktree: local has http://localhost:8090, SaaS has the
 # https://<id>.octopus.app URL.
+#
+# Demo branches are OPT-IN. Previously every make target ran `git ls-remote`
+# against origin and fed whatever demo/* branches existed straight into
+# tofu, which meant app-apply always tried to build all of them — including
+# the ones whose OCL references channels/step templates that don't exist in
+# a fresh Space. It also put a network call in the path of every single
+# target, which is the last thing you want in offline mode. Now:
+#   DEMO_BRANCHES='["demo/canary"]'   explicit list, wins over everything
+#   DEMO_BRANCHES_DISCOVER=true       auto-discover from origin (old behaviour)
+#   neither set                       no demo projects at all (default)
 define load_env
 	set -a; \
 	[ -f .env ] || { echo "Missing .env — copy .env.example and fill it in."; exit 1; }; \
 	source .env; set +a; \
 	[ -n "$$OCTOPUS_URL" ] || { echo "OCTOPUS_URL is unset in .env (e.g. http://localhost:8090 or https://<id>.octopus.app)"; exit 1; }; \
-	DEMO_BRANCHES=$$(git ls-remote --heads origin 'demo/*' 2>/dev/null | awk '{print $$2}' | sed 's|refs/heads/||' | jq -R . | jq -s -c . 2>/dev/null || echo '[]'); \
+	if [ -n "$${DEMO_BRANCHES:-}" ]; then \
+	  DEMO_BRANCHES="$$DEMO_BRANCHES"; \
+	elif [ "$${DEMO_BRANCHES_DISCOVER:-false}" = "true" ]; then \
+	  DEMO_BRANCHES=$$(git ls-remote --heads origin 'demo/*' 2>/dev/null | awk '{print $$2}' | sed 's|refs/heads/||' | jq -R . | jq -s -c . 2>/dev/null || echo '[]'); \
+	else \
+	  DEMO_BRANCHES='[]'; \
+	fi; \
 	export TF_VAR_octopus_url="$$OCTOPUS_URL" \
 	       TF_VAR_octopus_api_key="$$OCTOPUS_API_KEY" \
 	       TF_VAR_github_pat="$$GITHUB_PAT" \
@@ -35,7 +51,8 @@ define load_env
 	       TF_VAR_enable_platform_hub="$${OCTOPUS_PLATFORM_HUB_ENABLED:-true}" \
 	       TF_VAR_space_is_default="$${OCTOPUS_SPACE_IS_DEFAULT:-true}" \
 	       TF_VAR_demo_branches="$$DEMO_BRANCHES" \
-	       TF_VAR_sealed_secrets_tls_b64="$${SEALED_SECRETS_TLS_B64:-}"; \
+	       TF_VAR_sealed_secrets_tls_b64="$${SEALED_SECRETS_TLS_B64:-}" \
+	       TF_VAR_applicationset_github_pat="$${GITHUB_PAT:-}"; \
 	if [ "$${GITEA_ENABLED:-false}" = "true" ]; then \
 	  [ -n "$${GITEA_TOKEN:-}" ] || { echo "GITEA_ENABLED=true but GITEA_TOKEN is empty — run 'make gitea-bootstrap'."; exit 1; }; \
 	  export TF_VAR_github_username="$${GITEA_ADMIN_USER:-admin}" \
@@ -46,7 +63,7 @@ endef
 .PHONY: help \
         up down logs ps nuke \
         gitea-up gitea-down gitea-nuke gitea-logs gitea-bootstrap gitea-push \
-        gitea-enable gitea-disable open \
+        gitea-enable gitea-disable gitea-mirror open \
         bootstrap master-key mint-api-key ensure-api-key \
         space-init space-plan space-apply space-destroy space-fmt space-validate \
         cp-init cp-plan cp-apply cp-destroy cp-fmt cp-validate \
@@ -61,6 +78,8 @@ help:
 	@echo "compose/              : up | down | logs | ps | nuke      (local self-host only)"
 	@echo "local gitea (offline) : gitea-up | gitea-bootstrap | gitea-push | gitea-logs | gitea-down | gitea-nuke"
 	@echo "  git backend switch  : gitea-enable (point lab at gitea) | gitea-disable (back to github)"
+	@echo "  sync from upstream  : gitea-mirror [REFS=\"main demo/x\"]  (github -> gitea; needs network)"
+	@echo "  local dev push      : gitea-push  (your working commit -> gitea)"
 	@echo "open                  : open Octopus + Argo CD + Gitea in your browser (skips anything that's down)"
 	@echo "bootstrap             : bootstrap (fresh clone → running lab) | master-key | mint-api-key (local-only)"
 	@echo "deploys come from CI: push to main on github → .github/workflows/build.yml → release.yml"
@@ -130,6 +149,15 @@ gitea-push:
 		[ -n "$$FORCE" ] || exit 1; \
 	fi
 	$(load_env) git push "http://$${GITEA_ADMIN_USER:-admin}:$${GITEA_TOKEN}@localhost:3000/$${GITEA_ADMIN_USER:-admin}/$${GITEA_REPO:-octopus-iac-lab}.git" HEAD:refs/heads/main
+
+# Reconcile Gitea from upstream (github) — the "pull relevant changes into
+# gitea" step. Reads UPSTREAM refs, not your working tree, so unfinished
+# local work can't leak into the lab. The only target here that needs
+# internet, by design.
+#   make gitea-mirror                      # refs from GITEA_MIRROR_REFS (default: main)
+#   make gitea-mirror REFS="main demo/canary"
+gitea-mirror:
+	$(load_env) ./compose/mirror-to-gitea.sh $(REFS)
 
 # Point Octopus CaC, Platform Hub, and Argo CD at Gitea (or back at github).
 # Rewrites gitops/ + .octopus/ URLs in the working tree and generates
