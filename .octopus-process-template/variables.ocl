@@ -1,0 +1,95 @@
+variable "Project.WorkerPool" {
+    type = "WorkerPool"
+
+    value "prod-pool" {
+        environment = ["production"]
+    }
+}
+
+variable "Replicas" {
+    value "3" {
+        environment = ["production"]
+        tenant_tag = ["tier/enterprise"]
+    }
+
+    value "2" {
+        environment = ["production"]
+        tenant_tag = ["tier/pro"]
+    }
+
+    value "1" {
+        environment = ["production"]
+        tenant_tag = ["tier/free"]
+    }
+
+    value "1" {
+        environment = ["dev"]
+    }
+
+}
+
+variable "Tier" {
+    value "free" {
+        tenant_tag = ["tier/free"]
+    }
+
+    value "pro" {
+        tenant_tag = ["tier/pro"]
+    }
+
+    value "enterprise" {
+        tenant_tag = ["tier/enterprise"]
+    }
+
+}
+
+variable "Featured.Mood" {
+    value "comedy" {}
+}
+
+variable "Brand.Icon" {
+    value "🃏" {}
+}
+
+variable "Brand.Color" {
+    value "#F5C518" {}
+}
+
+variable "Branding.Watermark" {
+    value "" {}
+
+    value "FREE TIER" {
+        tenant_tag = ["tier/free"]
+    }
+
+}
+
+variable "K8s.Namespace" {
+    value "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}" {}
+
+    value "randomquotes-#{Source}-#{Octopus.Environment.Name}" {
+        channel = ["ephemeral-previews"]
+    }
+}
+
+variable "App.Host" {
+    value "#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}.localtest.me" {}
+
+    value "octopus-randomquotes-#{Source}-#{Octopus.Environment.Name}.localtest.me" {
+        channel = ["ephemeral-previews"]
+    }
+}
+
+variable "App.Tenant" {
+    value "#{Octopus.Deployment.Tenant.Name}" {}
+
+}
+
+variable "Maintenance.Message" {
+    value "" {
+        prompt {
+            description = "Customer-facing message shown on the maintenance overlay. Set by the maintenance-on runbook; deploys leave it empty."
+            label = "Maintenance Message"
+        }
+    }
+}

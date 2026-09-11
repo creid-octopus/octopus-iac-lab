@@ -1,0 +1,62 @@
+process_template "deploy-workload" {
+    name = "Deploy randomquotes workload"
+    process_template_slug = "k8s-tenanted-app"
+    version_mask = "1.x"
+
+    parameter "AppName" {
+        value = "randomquotes"
+    }
+    parameter "Platform" {
+        value = "k8s"
+    }
+    parameter "Namespace" {
+        value = "randomquotes-#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}"
+    }
+    parameter "Host" {
+        value = "#{Source}-#{Octopus.Deployment.Tenant.Name}-#{Octopus.Environment.Name | ToLower}.localtest.me"
+    }
+    parameter "Replicas" {
+        value = "#{Replicas}"
+    }
+    parameter "Tenant" {
+        value = "#{Octopus.Deployment.Tenant.Name}"
+    }
+    parameter "Tier" {
+        value = "#{Tier}"
+    }
+    parameter "ContainerPort" {
+        value = "80"
+    }
+    parameter "ConfigMapName" {
+        value = "randomquotes-config"
+    }
+    parameter "ConfigMapMountPath" {
+        value = "/usr/share/nginx/html/config.json"
+    }
+    parameter "ConfigMapSubPath" {
+        value = "config.json"
+    }
+    parameter "ConfigMapYaml" {
+        value = <<-EOT
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: randomquotes-config
+            data:
+              config.json: |
+                {
+                  "tenant": "#{Octopus.Deployment.Tenant.Name}",
+                  "mood": "#{Featured.Mood}",
+                  "icon": "#{Brand.Icon}",
+                  "color": "#{Brand.Color}",
+                  "watermark": "#{Branding.Watermark}",
+                  "maintenance": ""
+                }
+                        EOT
+    }
+
+    package_parameter "AppImage" {
+        feed = "ghcr"
+        package_id = "admin/octopus-iac-lab"
+    }
+}

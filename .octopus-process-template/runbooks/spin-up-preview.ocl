@@ -1,0 +1,64 @@
+name = "Spin up preview"
+description = "Provisioning hook for native ephemeral preview environments. Creates the preview namespace (randomquotes-<env-name>, e.g. randomquotes-preview-pr<N>) once at env creation. The workload itself is deployed by the project's deployment process (deploy-configmap + deploy-manifests, scoped to the ephemeral-previews channel) on every release, so a new PR build redeploys the same env with its unique release image. Untenanted — previews are PR-scoped, not customer-scoped."
+default_guided_failure_mode = "EnvironmentDefault"
+multi_tenancy_mode = "Untenanted"
+
+connectivity_policy {
+    allow_deployments_to_no_targets = false
+}
+
+run_retention_policy {
+    quantity_to_keep = 20
+    type = "Count"
+}
+
+process {
+    step "create-namespace" {
+        name = "Create preview namespace"
+        properties = {
+            Octopus.Action.TargetRoles = "k8s"
+        }
+
+        action {
+            action_type = "Octopus.KubernetesRunScript"
+            properties = {
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                set -eu
+                NS="randomquotes-#{Source}-#{Octopus.Environment.Name}"
+                echo "Creating preview namespace $NS …"
+                kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+                EOT
+            }
+        }
+    }
+
+    step "announce-url" {
+        name = "Announce preview URL"
+        properties = {
+            Octopus.Action.TargetRoles = "k8s"
+        }
+
+        action {
+            action_type = "Octopus.KubernetesRunScript"
+            properties = {
+                Octopus.Action.Script.ScriptSource = "Inline"
+                Octopus.Action.Script.Syntax = "Bash"
+                Octopus.Action.Script.ScriptBody = <<-EOT
+                    ENV="#{Octopus.Environment.Name}"
+                    TAG="${ENV#preview-}"
+                    SLUG="${TAG##*-}"
+                    PRNUM="${SLUG#pr}"
+                    echo "Preview $SLUG (image #{Octopus.Release.Number}) ready."
+                    echo "  URL:       http://octopus-randomquotes-#{Source}-preview-$SLUG.localtest.me:8080"
+                    echo "  Namespace: randomquotes-#{Source}-preview-$SLUG"
+                    echo "  Release:   #{Octopus.Release.Number}"
+                    echo ""
+                    echo "Argo's parallel preview: http://argo-preview-pr-$PRNUM.localtest.me:8080"
+                    echo "Argo CD UI:               http://argocd.localtest.me:8080"
+                EOT
+            }
+        }
+    }
+}
