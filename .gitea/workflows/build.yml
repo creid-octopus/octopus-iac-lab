@@ -75,15 +75,22 @@ jobs:
           echo "VERSION=1.1.${{ github.run_number }}" >> "$GITHUB_ENV"
 
       - name: Build image
+        # Tagged with the REGISTRY reference as well as the short local one.
+        # This matters more than it looks: containerd matches images by exact
+        # reference, so importing only `octopus-iac-lab/randomquotes:X` means
+        # a pod asking for `host.docker.internal:3000/admin/...:X` finds
+        # nothing locally and falls through to a registry pull, defeating the
+        # whole point of pre-loading it.
         run: |
           set -euo pipefail
           cd src
           docker build \
             -t "${IMAGE_NAME}:${VERSION}" \
-            -t "${IMAGE_NAME}:latest" \
+            -t "${REGISTRY}/${REGISTRY_PATH}:${VERSION}" \
+            -t "${REGISTRY}/${REGISTRY_PATH}:latest" \
             --build-arg "VERSION=${VERSION}" \
             app
-          docker image inspect "${IMAGE_NAME}:${VERSION}" \
+          docker image inspect "${REGISTRY}/${REGISTRY_PATH}:${VERSION}" \
             --format '    built {{.RepoTags}} {{.Size}} bytes'
 
       - name: Load image into the cluster
@@ -102,8 +109,12 @@ jobs:
         # to Kubernetes.
         run: |
           set -euo pipefail
+          REF="${REGISTRY}/${REGISTRY_PATH}"
           TAR=/tmp/image.tar
-          docker save "${IMAGE_NAME}:${VERSION}" "${IMAGE_NAME}:latest" -o "$TAR"
+
+          # Save the REGISTRY-named ref, because that's what the Helm chart
+          # renders into the pod spec and what containerd will look for.
+          docker save "${REF}:${VERSION}" "${REF}:latest" -o "$TAR"
           ls -l "$TAR"
 
           for node in ${KIND_NODES}; do
@@ -112,7 +123,7 @@ jobs:
             # Verify rather than trust: a silent no-op here is the difference
             # between a green build and a deployment that can't find its image.
             docker exec "$node" ctr -n k8s.io images ls \
-              | grep "${IMAGE_NAME}:${VERSION}" \
+              | grep "${REF}:${VERSION}" \
               || { echo "ERROR: import reported success but image is absent on ${node}"; exit 1; }
           done
           rm -f "$TAR"
@@ -133,8 +144,7 @@ jobs:
           echo "${{ secrets.LAB_GIT_TOKEN }}" \
             | docker login "${REGISTRY}" -u "${{ secrets.LAB_GIT_USERNAME }}" --password-stdin
 
-          docker tag "${IMAGE_NAME}:${VERSION}" "${REF}:${VERSION}"
-          docker tag "${IMAGE_NAME}:${VERSION}" "${REF}:latest"
+          # Already tagged in the build step — just push.
           docker push "${REF}:${VERSION}"
           docker push "${REF}:latest"
 

@@ -73,7 +73,7 @@ endef
         cp-init cp-plan cp-apply cp-destroy cp-fmt cp-validate \
         ph-init ph-plan ph-apply ph-destroy ph-fmt ph-validate \
         template-publish template-share \
-        app-init app-plan app-apply app-destroy app-fmt app-validate \
+        app-init app-plan app-apply app-destroy app-fmt app-validate app-import-demos \
         agent-init agent-plan agent-apply agent-destroy agent-fmt agent-validate \
         argo-init argo-plan argo-apply argo-destroy argo-fmt argo-validate \
         fmt validate apply destroy rebuild
@@ -93,6 +93,7 @@ help:
 	@echo "tofu/platform-hub/    : ph-init | ph-plan | ph-apply | ph-destroy | ph-fmt | ph-validate"
 	@echo "process templates     : template-publish TEMPLATE=<slug> VERSION=<semver> | template-share TEMPLATE=<slug>"
 	@echo "tofu/app-randomquotes/: app-init | app-plan | app-apply | app-destroy | app-fmt | app-validate"
+	@echo "  demo-branch rescue  : app-import-demos  (adopt projects the provider created but didn't track)"
 	@echo "tofu/k8s-agent/       : agent-init | agent-plan | agent-apply | agent-destroy | agent-fmt | agent-validate"
 	@echo "tofu/argocd/          : argo-init | argo-plan | argo-apply | argo-destroy | argo-fmt | argo-validate"
 	@echo "convenience           : fmt (all) | validate (all) | apply (space,cp,ph,app,agent,argo) | destroy (rev) | rebuild (destroy + apply, non-interactive)"
@@ -304,6 +305,33 @@ template-share:
 	  --data '{"ProcessTemplateSlug":"$(TEMPLATE)","GitRef":"refs/heads/$(TEMPLATE_BRANCH)","ShareToAllSpaces":true,"IndividuallySharedSpaceIds":[]}'
 
 # --- tofu/app-randomquotes/ -----------------------------------------------
+
+# Adopt demo-branch projects that exist in Octopus but not in tofu state.
+#
+# Works around a provider bug: creating an octopusdeploy_project sometimes
+# succeeds server-side while the provider returns no state ("Missing Resource
+# State After Create"). The next apply then fails with "a project with this
+# name already exists". This imports whatever's really there, skipping
+# anything already tracked, so it's safe to re-run.
+#
+# Only touches the project resources. Child resources (channels, variables,
+# tenant links, triggers) couldn't have been created without the project in
+# state, so a normal `make app-apply` picks those up afterwards.
+app-import-demos:
+	@$(load_env) cd $(APP_DIR) && \
+	for b in $$(echo "$$TF_VAR_demo_branches" | jq -r '.[]' 2>/dev/null); do \
+	  slug=$${b#demo/}; \
+	  addr="octopusdeploy_project.branch_demo[\"$$b\"]"; \
+	  if tofu state list 2>/dev/null | grep -qxF "$$addr"; then \
+	    echo "already tracked: $$b"; continue; \
+	  fi; \
+	  id=$$(curl -s -H "X-Octopus-ApiKey: $$OCTOPUS_API_KEY" \
+	    "$$OCTOPUS_URL/api/$$(cd ../space && tofu output -raw space_id)/projects?partialName=$$slug-randomquotes&take=100" \
+	    | jq -r --arg n "$$slug-randomquotes" '.Items[] | select(.Name==$$n) | .Id'); \
+	  if [ -z "$$id" ]; then echo "not in octopus (nothing to import): $$b"; continue; fi; \
+	  echo "importing $$b -> $$id"; \
+	  tofu import "$$addr" "$$id" || exit $$?; \
+	done
 
 app-init:
 	cd $(APP_DIR) && tofu init

@@ -33,7 +33,7 @@ Three phases. Phase 1 is done and verifiable now; Phases 2 and 3 are scoped but 
 | 1b | Reversible switch of Octopus CaC, Platform Hub, and Argo CD onto Gitea | **Done** — `cp-apply`, `ph-apply`, `argo-apply` all clean against Gitea |
 | 1c | Backend-agnostic OCL (`Git.CloneUrl`) + upstream mirror (`gitea-mirror`) | **Done** |
 | 2 | Gitea Actions + `act_runner`, ported build workflow | **Done** — builds offline and loads into both nodes, verified in-workflow |
-| 3 | Octopus feed / package reference for a registry-less image | Not started |
+| 3 | Octopus feed against the Gitea registry, containerd config | **Done, verified end to end** |
 
 ### Asymmetric defaults, and why
 
@@ -73,17 +73,32 @@ Choices worth knowing, because they differ from the instruqt tracks this was ada
 
 ## Addressing, the part that bites
 
-One repo, three different addresses depending on who's asking:
+### Required prerequisite: one /etc/hosts line
 
-| Caller | URL | Why |
+```
+127.0.0.1  host.docker.internal
+```
+
+Add that to your Mac's `/etc/hosts`. Without it the Gitea web UI is broken (`host.docker.internal` doesn't resolve on macOS by default, only inside containers); with it, **one address works from everywhere** — browser, Octopus container, and cluster nodes.
+
+That uniformity isn't cosmetic. It's forced by Gitea's container registry, which answers the `/v2/` auth challenge with a token endpoint URL built from its own `ROOT_URL`. Set `ROOT_URL` to `localhost` and containerd on a cluster node dutifully follows the challenge to `http://localhost:3000/v2/token`, which is the *node itself*, and fails with:
+
+```
+failed to fetch anonymous token: Get "http://localhost:3000/v2/token?...":
+dial tcp [::1]:3000: connect: connection refused
+```
+
+That failure looks like a TLS or insecure-registry problem and isn't — note the URL is already `http://`, so the containerd config was fine. It's purely the redirect address.
+
+### Who reaches Gitea how
+
+| Caller | Address | Note |
 |---|---|---|
-| Your Mac (browser, `git push`) | `http://localhost:3000` | Published container port |
-| Octopus container | `http://gitea:3000` | Same docker network, resolves by service name |
-| Kubernetes pod (Argo CD) | `http://host.docker.internal:3000` | The cluster is a separate network namespace and cannot resolve `gitea` |
+| Your Mac (browser, `git push`) | `http://host.docker.internal:3000` | Needs the `/etc/hosts` line. `localhost:3000` also still works for git. |
+| Octopus container | `http://host.docker.internal:3000` | `gitea:3000` also resolves (shared docker network), but don't use it for anything the cluster also reads |
+| Kubernetes nodes and pods | `http://host.docker.internal:3000` | Resolves to `192.168.65.254`, Docker Desktop's host gateway |
 
-**Anything both Octopus and Argo CD read must use the `host.docker.internal` form.** That means the CaC repo URL and every Application `repoURL` in Phase 1b. This mirrors what the K8s agent already does with `http://host.docker.internal:8090` to reach Octopus, which is known to work on this setup.
-
-`host.docker.internal` does *not* resolve on the Mac itself, only inside containers, which is why Gitea's `ROOT_URL` stays on `localhost` (otherwise every link in the web UI would break).
+**Use `host.docker.internal` for everything.** `gitea:3000` is invisible to the cluster, and `localhost:3000` is wrong from both the cluster and the Octopus container. The K8s agent already relies on the same address to reach Octopus at `host.docker.internal:8090`, which is what proved it works here.
 
 ## Running it
 
@@ -377,9 +392,34 @@ Octopus resolving a version and kubelet pulling the image are two different cons
 
 If `cluster_node_containers` doesn't match your cluster (it defaults to `desktop-control-plane` / `desktop-worker`), the apply fails loudly rather than half-configuring. `kubectl get nodes` will tell you the right names.
 
-### Still untested
+### Verifying the registry path specifically
 
-Whether Octopus's feed trigger fires when a new tag appears in the Gitea registry, the way it does for GHCR. If it does, the CI-to-release path works unchanged. If not, the workflow needs an explicit release-creation step, and it can reach Octopus as `octopus:8080` since job containers share that network.
+The pre-loaded containerd image will happily mask a broken registry, since `IfNotPresent` never reaches out. To prove the registry genuinely works, remove the local copy first:
+
+```bash
+for n in desktop-control-plane desktop-worker; do
+  docker exec $n ctr -n k8s.io images rm host.docker.internal:3000/admin/octopus-iac-lab:<tag>
+done
+kubectl -n argo-randomquotes-local-acme-corp-dev delete pod -l app=randomquotes
+kubectl -n argo-randomquotes-local-acme-corp-dev describe pod -l app=randomquotes | grep -i pull
+```
+
+`Successfully pulled image` is the pass condition. `already present on machine` means you're still testing the fallback, not the registry.
+
+Re-run the build workflow afterwards so the image is back in containerd too. Both paths are worth having: the registry is what Octopus resolves versions from, and the pre-loaded copy means a flaky registry mid-talk can't stop a pod from starting.
+
+### The feed trigger works too
+
+**Confirmed: Octopus's external-feed trigger fires when a new tag appears in the Gitea registry, mints a release, and deploys it — with no changes to the trigger and no explicit release-creation step in the workflow.**
+
+That's the important result. The offline path isn't a reimplementation of the cloud pipeline, it's the same mechanism pointed at a different registry:
+
+```
+edit app/ → push to Gitea → Actions builds + pushes to the Gitea registry
+          → Octopus feed trigger mints a release → deploys → Argo syncs
+```
+
+Which means the CI-to-deployment story demos identically whether you're online or not.
 
 ## Re-running and resetting
 

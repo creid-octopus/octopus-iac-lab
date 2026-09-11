@@ -41,13 +41,24 @@ services:
       # Skips the interactive first-run installer wizard. Without this the
       # API 404s until someone completes setup in a browser.
       - GITEA__security__INSTALL_LOCK=true
-      # ROOT_URL is what Gitea prints in clone buttons and web links, so it
-      # points at localhost for human use. Octopus and Argo CD get the
-      # host.docker.internal form explicitly in their own config instead —
-      # host.docker.internal does NOT resolve on the Mac itself, only inside
-      # containers, so using it here would break every link in the browser.
-      - GITEA__server__ROOT_URL=http://localhost:3000/
-      - GITEA__server__DOMAIN=localhost
+      # ROOT_URL must be host.docker.internal, not localhost, and the reason
+      # is non-obvious: Gitea's container registry answers the /v2/ auth
+      # challenge with a token endpoint URL built from ROOT_URL. With
+      # localhost, containerd on a cluster node follows that challenge to
+      # http://localhost:3000/v2/token — which is the NODE itself, not your
+      # Mac — and fails with "connection refused". Image pulls then break
+      # even though the insecure-registry config is correct.
+      #
+      # REQUIRES a matching entry in your Mac's /etc/hosts, or every link in
+      # the web UI breaks (host.docker.internal doesn't resolve on macOS by
+      # default, only inside containers):
+      #
+      #   127.0.0.1  host.docker.internal
+      #
+      # With that line, one address works everywhere: browser, Octopus
+      # container, and cluster nodes. See docs/local-gitea.md.
+      - GITEA__server__ROOT_URL=http://host.docker.internal:3000/
+      - GITEA__server__DOMAIN=host.docker.internal
       - GITEA__server__SSH_DOMAIN=localhost
       - GITEA__server__SSH_PORT=222
       # Lab instance — nobody else should be signing up.
